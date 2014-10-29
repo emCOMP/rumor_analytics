@@ -1,0 +1,4 @@
+10-28-14
+
+decisions we've made but should consider: remove emoticons, leave hashtags but remove hash symbol, remove stopwords
+tasks: find a baseline semantic network, tie weight distribution, cliques, component distribution, k-cores
