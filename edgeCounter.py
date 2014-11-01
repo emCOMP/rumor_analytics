@@ -15,8 +15,18 @@ def countPairs(pairs):
 		if pair in pairCounts:
 			oldCount = pairCounts.get(pair);
 			pairCounts[pair] = oldCount + 1;
+
+		#Check for the pair in reverse order.
 		else:
-			pairCounts[pair] = 1;
+			splitPair = pair.split('\t')
+			reversePair = splitPair[1]+'\t'+splitPair[0]
+
+			if reversePair in pairCounts:
+				oldCount = pairCounts.get(reversePair);
+				pairCounts[reversePair] = oldCount + 1;
+			
+			else:
+				pairCounts[pair] = 1;
 
 	return pairCounts;
 
