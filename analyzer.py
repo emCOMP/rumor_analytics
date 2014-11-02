@@ -35,12 +35,12 @@ def kth_subgraph(cores, edges, k, kmax):
 	return gl.SGraph(newVerts, newEdges, '__id', src_fieldname, dst_fieldname)
 
 
-#vertPath = raw_input('Path to vertex file: ');
-#edgePath = raw_input('Path to edge file: ');
+vertPath = raw_input('Path to vertex file: ');
+edgePath = raw_input('Path to edge file: ');
 kThreshold = int(raw_input('Maxiumum k-cores to compute: '))
-vertPath = 'csv/million_newFilter_vertices_GL.csv'
+#vertPath = 'csv/million_newFilter_vertices_GL.csv'
 vid_fieldname = 'id'
-edgePath = 'csv/million_newFilter_edges_GL.csv'
+#edgePath = 'csv/million_newFilter_edges_GL.csv'
 src_fieldname = 'Word 1'
 dst_fieldname = 'Word 2'
 
