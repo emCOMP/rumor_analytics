@@ -79,39 +79,107 @@ def processTweets(tweetList):
 	stemmer = EnglishStemmer(True)
 	stops = set(stopwords.words("english"))
 
+	#All Spanish stopwords which do not also occur in english.
+	spanish = set(stopwords.words("spanish")).difference(stops);
+
 	newTweets = list()
 	corpus = set()
 
 	#Get the tweet text and tokenize it.
 	for tweet in tweetList:
+
 		#Remove URLs and Emoji, convert to lowercase, convert to unicode string.
 		text = preprocessTweet(tweet['text']).lower();
+
 		wordList = [w for w in tokenizer.tokenize(text) if w not in stops]
 
-		#Stem each word and add it to the corpus.
-		for i, word in enumerate(wordList):
-			stem = stemmer.stem(word)
-			wordList[i] = stem
-			corpus.add(stem)
+		tweetIsSpanish = False
+		for w in wordList:
+			if w in spanish:
+				tweetIsSpanish = True
 
-		#Construct a new tweet with the processed information.
-		newTweet = {'tokens': wordList}
-		newTweets.append(newTweet)
+
+		if tweetIsSpanish:
+			#Skip the tweet.
+			continue
+
+		else:
+			#Stem each word and add it to the corpus.
+			for i, word in enumerate(wordList):
+				stem = stemmer.stem(word)
+				wordList[i] = stem
+				corpus.add(stem)
+
+			#Construct a new tweet with the processed information.
+			newTweet = {'tokens': wordList}
+			newTweets.append(newTweet)
 
 	return (newTweets, corpus);
 
 
-#Writes the information to a csv file.
+
+
+#Writes the information to a csv file read for import to GraphLab.
 #fileName is the desired fileName for the output.
 #pairs is the dictionary with the pair information.
 #threshold is the minimum edge weight for the edge to be recorded.
-def writeCSV(fileName, pairs, threshhold):
+def writeCSV_graphlab(fileName, corpus, pairs, threshhold):
 
-	writePath = "csv/"+fileName;
-	with open(writePath, 'w') as f:
-		headers = ['Word 1', 'Word 2', 'Occurrences']
-		csvWriter = csv.writer(f)
-		csvWriter.writerow(headers)
+	vertexPath = "csv/"+fileName+"_vertices_GL.csv";
+	edgePath = "csv/"+fileName+"_edges_GL.csv";
+
+	vertId = dict();
+
+
+	with open(vertexPath, 'w') as vertF:
+		vertHeaders = ['id', 'word'];
+		csvWriter = csv.writer(vertF)
+		csvWriter.writerow(vertHeaders)
+
+		for index, vert in enumerate(corpus):
+			vertId[vert] = index;
+			line = [index, vert.encode('UTF-8','xmlcharrefreplace')]
+			csvWriter.writerow(line);
+
+
+	with open(edgePath, 'w') as edgeF:
+		edgeHeaders = ['Word 1', 'Word 2', 'Co-occurrence']
+		csvWriter = csv.writer(edgeF)
+		csvWriter.writerow(edgeHeaders)
+
+		for pair, count in pairs.iteritems():
+			if count > threshhold:
+				wordOne, wordTwo = pair.split('\t');
+				line = [vertId.get(wordOne), vertId.get(wordTwo), str(count)];
+				csvWriter.writerow(line);
+
+
+#Writes the information to a csv file.
+#fileName is the desired fileName for the output.
+#corpus is an iterable with all unique words in pairs.
+#pairs is the dictionary with the pair information.
+#threshold is the minimum edge weight for the edge to be recorded.
+def writeCSV(fileName, corpus, pairs, threshhold):
+
+	vertexPath = "csv/"+fileName+"_vertices.csv";
+	edgePath = "csv/"+fileName+"_edges.csv";
+	
+
+
+	with open(vertexPath, 'w') as vertF:
+		vertHeaders = ['Word'];
+		csvWriter = csv.writer(vertF)
+		csvWriter.writerow(vertHeaders)
+
+		for vert in corpus:
+			line = vert.encode('UTF-8','xmlcharrefreplace')
+			csvWriter.writerow(line);
+
+
+	with open(edgePath, 'w') as edgeF:
+		edgeHeaders = ['Word 1', 'Word 2', 'Occurrences']
+		csvWriter = csv.writer(edgeF)
+		csvWriter.writerow(edgeHeaders)
 
 		for pair, count in pairs.iteritems():
 			if count > threshhold:
@@ -119,10 +187,19 @@ def writeCSV(fileName, pairs, threshhold):
 				line = [wordOne, wordTwo, str(count)];
 				csvWriter.writerow(line);
 
+def getCSVType():
+	useGL = raw_input('Desired CSV format? (Please enter a letter...)\nPlain(p), GraphLab(g), or Both(b): ')
+	if useGL == 'p' or useGL == 'g' or useGL == 'b':
+		return useGL
+	else:
+		return getCSVType()
+
+
 #Takes an array of tweet objects.
 def main():
 	tweetLimit = int(raw_input('Number of tweets to process: '))
 	threshhold = int(raw_input('Minimum edge threshold: '))
+	useGL = getCSVType()
 	tweetIter = mongo_config.find().limit(tweetLimit)
 	fName = raw_input('Destination file name: ')
 	print "Processing..."
@@ -133,10 +210,15 @@ def main():
 	pairs = getPairs(pTweets)
 	pairCounts = countPairs(pairs)
 	print "Counting complete.\n"
-	print "Corpus"
-	print corpus
-	print '\n'
-	writeCSV(fName, pairCounts, threshhold)
+
+	if useGL == 'p':
+		writeCSV(fName, corpus, pairCounts, threshhold);
+	elif useGL == 'g':
+		writeCSV_graphlab(fName, corpus, pairCounts, threshhold);
+	else:
+		writeCSV(fName, corpus, pairCounts, threshhold);
+		writeCSV_graphlab(fName, corpus, pairCounts, threshhold);
+
 	print "Writing complete."
 	exit()
 
