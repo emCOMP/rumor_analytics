@@ -2,3 +2,35 @@
 
 decisions we've made but should consider: remove emoticons, leave hashtags but remove hash symbol, remove stopwords
 tasks: find a baseline semantic network, tie weight distribution, cliques, component distribution, k-cores
+
+11-04-14
+
+Jim will start processing the entire corpus of tweets. For now we will work with the 1 million tweet sample, /var/analytics/ on boston SoME lab server.
+
+
+
+TASKS:
+
+1. Basic analytics (Kyle)
+
+- tie weight distribtuion
+- network size as a function of pruning size
+- top/bottomquantiles of  word pairs
+- average word length 
+- average tweets length
+- etc.
+
+
+2. Subgroup identification (Logan)
+
+- k-cores
+- cliques
+- etc.
+
+3. Components (Jim)
+
+- How does the component size distribution change with pruning level?
+- Do components match our rumors?
+
+
+Anu and John will also help out. In particular we can explore these same three features for the baseline data - Brown Corpus and the Twitter Sentiment. 
