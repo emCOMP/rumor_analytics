@@ -24,7 +24,7 @@ def countPairs(pairs):
 			if reversePair in pairCounts:
 				oldCount = pairCounts.get(reversePair);
 				pairCounts[reversePair] = oldCount + 1;
-			
+
 			else:
 				pairCounts[pair] = 1;
 
@@ -57,14 +57,14 @@ def getPairs(tweetList):
 
 #Helper for processTweets
 def preprocessTweet(tweetText):
-	
-	#Convert to unicode. 
+
+	#Convert to unicode.
 	#Must encode then re-encode because of some funky mixing of strings and unicode in tweets.
 	pTweet = tweetText.encode('UTF-8', 'ignore').decode('UTF-8', 'ignore')
 
 	#Remove URLs
 	pTweet = re.sub('http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', '', pTweet);
-	
+
 	#Remove Non-ASCII Unicode
 	return re.sub(r'[^\x00-\x7F]+',u'',pTweet);
 
@@ -74,7 +74,7 @@ def preprocessTweet(tweetText):
 #Takes a list of tweet objects and returns a corpus set object
 #and a list of tweet objects with URLs, Stopwords, and Emoji removed, and all words stemmed.
 def processTweets(tweetList):
-	
+
 	tokenizer = RegexpTokenizer(r'\w+')
 	stemmer = EnglishStemmer(True)
 	stops = set(stopwords.words("english"))
@@ -163,7 +163,7 @@ def writeCSV(fileName, corpus, pairs, threshhold):
 
 	vertexPath = "csv/"+fileName+"_vertices.csv";
 	edgePath = "csv/"+fileName+"_edges.csv";
-	
+
 
 
 	with open(vertexPath, 'w') as vertF:
@@ -197,10 +197,13 @@ def getCSVType():
 
 #Takes an array of tweet objects.
 def main():
-	tweetLimit = int(raw_input('Number of tweets to process: '))
+	tweetLimit = int(raw_input('Number of tweets to process (0 = all): '))
 	threshhold = int(raw_input('Minimum edge threshold: '))
 	useGL = getCSVType()
-	tweetIter = mongo_config.find().limit(tweetLimit)
+        if tweetLimit == 0:
+                tweetIter = mongo_config.find()
+        else:
+                tweetIter = mongo_config.find().limit(tweetLimit)
 	fName = raw_input('Destination file name: ')
 	print "Processing..."
 	processed = processTweets(tweetIter)
@@ -243,8 +246,3 @@ testTweets.append({'text': 'If there is a Mr. Bates in the building please repor
 '''
 
 main()
-
-
-
-
-
