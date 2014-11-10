@@ -1,5 +1,6 @@
 import csv
 import re
+from random import random, shuffle
 from time import time
 from pymongo import MongoClient
 from nltk.corpus import stopwords
@@ -10,8 +11,8 @@ from nltk.tokenize import RegexpTokenizer
 
 #Helper for processTweets
 def preprocessTweet(tweetText):
-	
-	#Convert to unicode. 
+
+	#Convert to unicode.
 	#Must encode then re-encode because of some funky mixing of strings and unicode in tweets.
 	start = time()
 	pTweet = tweetText.encode('UTF-8', 'ignore').decode('UTF-8', 'ignore')
@@ -23,7 +24,7 @@ def preprocessTweet(tweetText):
 	pTweet = re.sub(r'[^\x00-\x7F]+',u'',pTweet).lower();
 	finish = time()
 	#print "Enconding time percentage: ", (((encF-start)/(finish-start))*100), "%"
-	
+
 	return pTweet
 
 	#Remove Hashtags
@@ -34,7 +35,7 @@ def preprocessTweet(tweetText):
 #spanish is a set of Spanish stopwords which do not occur in English.
 def processTweet(tweetText, tokenizer, stemmer, stops, spanish):
 
-	
+
 	#All Spanish stopwords which do not also occur in english.
 	corpus = list()
 
@@ -99,7 +100,7 @@ def countPairs(pairs, pairCounts):
 			try:
 				oldCount = pairCounts[reversePair];
 				pairCounts[reversePair] = oldCount + 1;
-			
+
 			except KeyError:
 				pairCounts[pair] = 1;
 
@@ -187,7 +188,7 @@ def writeCSV(fileName, corpus, pairs, threshhold):
 
 	vertexPath = "csv/"+fileName+"_vertices.csv";
 	edgePath = "csv/"+fileName+"_edges.csv";
-	
+
 
 
 	with open(vertexPath, 'w') as vertF:
@@ -233,8 +234,8 @@ def countCorpus(corp):
 	for para in corp.paras():
 
 		#Process the raw paragraph.
-		processed, tempCorpus = processParagraph(para, stemmer, stops)	
-		
+		processed, tempCorpus = processParagraph(para, stemmer, stops)
+
 		#Find the pairs of words in the paragraph.
 		pairs = getPairs(processed)
 
@@ -269,15 +270,15 @@ def countMongo(mongoIter):
 	#Loop Optimization
 	cUpdate = pairCorpus.update
 	for tweet in mongoIter:
-		
+
 		text = tweet['text'];
 
 		start = time()
 		processS = time()
 		#Process the raw paragraph.
-		processed, tempCorpus = processTweet(text, tokenizer, stemmer, stops, spanish)	
+		processed, tempCorpus = processTweet(text, tokenizer, stemmer, stops, spanish)
 		processF = time()
-		
+
 		#Find the pairs of words in the paragraph.
 		pairS = time()
 		pairs = getPairs(processed)
@@ -305,6 +306,17 @@ def countMongo(mongoIter):
 
 	return (pairCounts, pairCorpus)
 
+def randomMongo(db):
+        while True:
+                sample_size = int(raw_input('Sample Size? (enter 0 for full dataset): '))
+                if sample_size == 0:
+                        tweetIter = db.find({},{"text":1})
+                        return tweetIter
+                elif sample_size > 0:
+                        tweetIter = db.find({},{"text":1})
+                        tweet_list = [x for x in tweetIter]
+                        random_tweets = random.sample(tweet_list,sample_size)
+                        return random_tweets
 
 #Takes an array of tweet objects.
 def main():
@@ -314,7 +326,7 @@ def main():
 	db = dbclient.new_boston
 	mongo_config = db.tweets
 
-	tweetIter = mongo_config.find({},{"text":1})
+	tweetIter = randomMongo(mongo_config)
 
 	threshhold = int(raw_input('Minimum edge threshold: '))
 	useGL = getCSVType()
