@@ -1,6 +1,6 @@
 import csv
 import re
-from random import random, shuffle
+import random
 from time import time
 from pymongo import MongoClient
 from nltk.corpus import stopwords
