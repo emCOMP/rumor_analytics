@@ -24,6 +24,7 @@ TODO:
 
 import csv
 import re
+import random
 from pymongo import MongoClient
 from nltk.corpus import stopwords
 from nltk.stem.snowball import EnglishStemmer
@@ -229,6 +230,18 @@ def write_CSV(fileName, corpus, pairs):
 	print "\nWriting complete.\n\n"
 
 
+def randomMongo(db):
+        while True:
+                sample_size = int(raw_input('Sample Size? (enter 0 for full dataset): '))
+                if sample_size == 0:
+                        tweetIter = db.find({},{"text":1})
+                        return tweetIter
+                elif sample_size > 0:
+                        tweetIter = db.find({},{"text":1})
+                        tweet_list = [x for x in tweetIter]
+                        random_tweets = random.sample(tweet_list,sample_size)
+                        return random_tweets
+
 #Main Logic
 def main():
 
@@ -236,13 +249,7 @@ def main():
 	dbclient = MongoClient('z')
 	db = dbclient.new_boston
 	mongo_config = db.tweets
-
-	tweetLimit = int(raw_input('Number of tweets to process\n(Enter a numer, or "-1" to process all): '))
-
-	#This is the mongo iterator.
-	tweetIter = mongo_config.find({},{"text":1})
-	if tweetLimit > 0:
-		tweetIter = tweetIter.limit(tweetLimit)
+	tweetIter = randomMongo(mongo_config)
 
 	#Get the threshold from the user.
 	threshhold = int(raw_input('Minimum edge threshold: '))
