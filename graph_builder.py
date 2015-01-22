@@ -8,6 +8,7 @@ Outputs three CSVs:
 	<name>_v.csv -Vertex List
 	<name>_e.csv -Edge List
 	<name>_e_wNames.csv -Edge List with the Word Names rather than id numbers.
+	<name>_info.txt -Information about the set. (Number of items processed, etc.)
 
 ---------------------------------
 Notes:
@@ -30,12 +31,16 @@ from nltk.corpus import stopwords
 from nltk.stem.snowball import EnglishStemmer
 from nltk.tokenize import RegexpTokenizer
 
+corpusSize = 0
+
 #Helper for processTweets
 def clean_tweet(tweetText):
 	
 	#Convert to unicode. 
 	#Must encode then re-encode because of some funky mixing of strings and unicode in tweets.
 	pTweet = tweetText.encode('UTF-8', 'ignore').decode('UTF-8', 'ignore')
+	pTweet = re.sub(r'@\w+', u'', pTweet);
+
 
 	#Remove URLs
 	pTweet = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', u'', pTweet);
@@ -123,13 +128,38 @@ def count_pairs(pairs, pairCounts):
 	return pairCounts;
 
 
+def get_subjective(filename):
+	
+	subjective = list()
+	with open(filename,'rb') as f:
+		csv_reader = csv.reader(f)
+		headers = True
+		for row in csv_reader:
+			if headers:
+				headers = False
+			else:
+				#If it's a strongly subjective word.
+				if row[0] == 'strongsubj':
+					subjective.append(row[2])
+
+	return subjective
+
+
+
 #Builds the graph out of a mongoDB iterator.
 #'threshold' is the minimum edge weight .
 def graph_from_mongo(mongoIter, threshhold):
 
 	tokenizer = RegexpTokenizer(r'\w+')
 	stemmer = EnglishStemmer(True)
-	stops = frozenset(stopwords.words("english"))
+
+	subjective_words = get_subjective('subjectivity_clues.csv')
+	
+
+	###########
+	stops = subjective_words
+	stops.extend(stopwords.words("english"))
+	stops = frozenset(stops)
 	spanish = frozenset(stopwords.words("spanish")).difference(stops)
 
 	#Our corpus for the words which appear in our set of pairs.
@@ -141,12 +171,21 @@ def graph_from_mongo(mongoIter, threshhold):
 	#Loop counter for printing progress messages.
 	i = 0
 
+	#Count the number of non-junk tweets.
+	global corpusSize
+	corpusSize = 0
+
 	for tweet in mongoIter:
 		
 		text = tweet['text'];
 
 		#Process the raw paragraph.
-		processed = process_tweet(text, tokenizer, stemmer, stops, spanish)	
+		processed = process_tweet(text, tokenizer, stemmer, stops, spanish)
+
+		#If the tweet did not get thrown out.
+		if processed[0]:
+			#Count it toward the corpus size
+			corpusSize += 1
 		
 		#Find the pairs of words in the paragraph.
 		pairs = get_pairs(processed)
@@ -159,18 +198,29 @@ def graph_from_mongo(mongoIter, threshhold):
 			print str(i)+" Rows completed."
 
 		i += 1
-
 	
+		
+	print "\nProcessing complete.\n"
+	print "Net tweets processed: ", corpusSize,'\n' #Net meaning after Spanish and Non-English-Unicode-Only tweets are filtered.
+	print "Building graph..."
+
 	finalPairCounts = dict()
+
+	#Convert corpus size to a float.
+	corpusSize = float(corpusSize)
 
 	#Prune pairs to threshold edge weight.
 	for pair, count in tempPairCounts.iteritems():
 		if count > threshhold:
-			finalPairCounts[pair] = count
+
+
+			#Normalize the count.
+			finalPairCounts[pair] = count/corpusSize
+
+			#Add the words to the corpus.
 			wordOne, wordTwo = pair.split('\t')
 			corpus.add(wordOne)
 			corpus.add(wordTwo)
-
 
 	print "\nGraph building complete.\n"
 	return (finalPairCounts, corpus)
@@ -184,12 +234,14 @@ def graph_from_mongo(mongoIter, threshhold):
 #	<name>_v.csv -Vertex List
 #	<name>_e.csv -Edge List
 #	<name>_e_wNames.csv -Edge List with the Word Names rather than id numbers.
+#And an info.txt
 def write_CSV(fileName, corpus, pairs):
 
 	#Set file paths.
 	vertexPath = fileName+"_v.csv";
 	edgePath = fileName+"_e.csv";
 	wnamesPath = fileName+"_e_wNames.csv";
+	infoPath = fileName+"_info.txt";
 
 	#Keep track of vertex IDs.
 	vertId = dict();
@@ -226,6 +278,11 @@ def write_CSV(fileName, corpus, pairs):
 			wordOne, wordTwo = pair.split('\t')
 			line = [wordOne, wordTwo, count]
 			csvWriter.writerow(line)
+
+	with open(infoPath,'w') as infoFile:
+		global corpusSize
+		infoFile.write('Net number of tweets: ')
+		infoFile.write(corpusSize)
 
 	print "\nWriting complete.\n\n"
 
