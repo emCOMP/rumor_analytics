@@ -26,7 +26,7 @@ TODO:
 import csv
 import re
 import random
-from pymongo import MongoClient
+#from pymongo import MongoClient
 from nltk.corpus import stopwords
 from nltk.stem.snowball import EnglishStemmer
 from nltk.tokenize import RegexpTokenizer
@@ -38,7 +38,7 @@ def clean_tweet(tweetText):
 	
 	#Convert to unicode. 
 	#Must encode then re-encode because of some funky mixing of strings and unicode in tweets.
-	pTweet = tweetText.encode('UTF-8', 'ignore').decode('UTF-8', 'ignore')
+	pTweet = tweetText.decode('UTF-8', 'ignore')
 	pTweet = re.sub(r'@\w+', u'', pTweet);
 
 
@@ -179,9 +179,9 @@ def graph_from_mongo(mongoIter, threshhold):
 	global corpusSize
 	corpusSize = 0
 
-	for tweet in mongoIter:
+	for line in mongoIter:
 		
-		text = tweet['text'];
+		text = line
 
 		#Process the raw paragraph.
 		processed = process_tweet(text, tokenizer, stemmer, stops, spanish)
@@ -300,26 +300,29 @@ def randomMongo(db):
 
 #Main Logic
 def main():
+	with open('baseline_tweets.txt', 'rb') as f:
+		#Mongo Setup
+		'''
+		dbclient = MongoClient('z')
+		db = dbclient.new_boston
+		mongo_config = db.tweets
+		'''
+		tweetIter = f
+		
 
-	#Mongo Setup
-	dbclient = MongoClient('z')
-	db = dbclient.new_boston
-	mongo_config = db.tweets
-	tweetIter = randomMongo(mongo_config)
+		#Get the threshold from the user.
+		threshhold = int(raw_input('Minimum edge threshold: '))
 
-	#Get the threshold from the user.
-	threshhold = int(raw_input('Minimum edge threshold: '))
+		#Get destination path from the user.
+		fName = raw_input('Destination file name: ')
 
-	#Get destination path from the user.
-	fName = raw_input('Destination file name: ')
+		#Build Graph.
+		pairCounts, corpus = graph_from_mongo(tweetIter, threshhold)
 
-	#Build Graph.
-	pairCounts, corpus = graph_from_mongo(tweetIter, threshhold)
+		#Write to CSVs.
+		write_CSV(fName, corpus, pairCounts);
 
-	#Write to CSVs.
-	write_CSV(fName, corpus, pairCounts);
-
-	exit()
+		exit()
 
 
 main()
