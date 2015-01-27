@@ -185,6 +185,14 @@ def graph_from_mongo(mongoIter, threshhold):
 
 		#Process the raw paragraph.
 		processed = process_tweet(text, tokenizer, stemmer, stops, spanish)
+<<<<<<< HEAD
+=======
+
+		#If the tweet did not get thrown out.
+		if processed[0]:
+			#Count it toward the corpus size
+			corpusSize += 1
+>>>>>>> FETCH_HEAD
 		
 		#Find the pairs of words in the paragraph.
 		pairs = get_pairs(processed)
@@ -281,7 +289,11 @@ def write_CSV(fileName, corpus, pairs):
 	with open(infoPath,'w') as infoFile:
 		global corpusSize
 		infoFile.write('Net number of tweets: ')
+<<<<<<< HEAD
 		infoFile.write(str(corpusSize))
+=======
+		infoFile.write(corpusSize)
+>>>>>>> FETCH_HEAD
 
 	print "\nWriting complete.\n\n"
 
