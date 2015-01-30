@@ -15,6 +15,7 @@ Notes:
 
 -Stems all words
 -Removes stopwords.
+-Removes words which are highly subjective.
 -Ignores tweets containing Spanish stopwords.
 
 ---------------------------------
@@ -57,20 +58,21 @@ def clean_tweet(tweetText):
 #Takes a list of tweet objects and returns a corpus set object
 #and a list of tweet objects with URLs, Stopwords, and Emoji removed, and all words stemmed.
 #'spanish' is a set of Spanish stopwords which do not occur in English.
-def process_tweet(tweetText, tokenizer, stemmer, stops, spanish):
+def process_tweet(tweetText, tokenizer, stemmer, stops, filterWords):
 
 	#Remove URLs and Emoji, convert to lowercase, convert to unicode string.
 	text = clean_tweet(tweetText);
 	wordList = [w for w in tokenizer.tokenize(text) if w not in stops]
 
-	tweetIsSpanish = False
+	toFilter = False
 	
-	#Detect Spanish Tweetes
+	#Detect Spanish Tweets, RTs.
 	for w in wordList:
-		if w in spanish:
-			tweetIsSpanish = True
+		if w in filterWords:
+			toFilter = True
+			
 
-	if tweetIsSpanish:
+	if toFilter:
 		#Skip the tweet.
 		return (list(), list())
 
@@ -164,7 +166,8 @@ def graph_from_mongo(mongoIter, threshhold):
 	stops = subjective_words
 	stops.extend(stopwords.words("english"))
 	stops = frozenset(stops)
-	spanish = frozenset(stopwords.words("spanish")).difference(stops)
+	filterWords = set(stopwords.words("spanish"))
+	filterWords = frozenset(filterWords).difference(stops)
 
 	#Our corpus for the words which appear in our set of pairs.
 	corpus = set()
@@ -184,15 +187,15 @@ def graph_from_mongo(mongoIter, threshhold):
 		text = tweet['text'];
 
 		#Process the raw paragraph.
-		processed = process_tweet(text, tokenizer, stemmer, stops, spanish)
-<<<<<<< HEAD
-=======
+		processed = process_tweet(text, tokenizer, stemmer, stops, filterWords)
 
 		#If the tweet did not get thrown out.
-		if processed[0]:
-			#Count it toward the corpus size
-			corpusSize += 1
->>>>>>> FETCH_HEAD
+		try:
+			if processed[0]:
+				#Count it toward the corpus size
+				corpusSize += 1
+		except:
+			continue
 		
 		#Find the pairs of words in the paragraph.
 		pairs = get_pairs(processed)
@@ -289,11 +292,7 @@ def write_CSV(fileName, corpus, pairs):
 	with open(infoPath,'w') as infoFile:
 		global corpusSize
 		infoFile.write('Net number of tweets: ')
-<<<<<<< HEAD
 		infoFile.write(str(corpusSize))
-=======
-		infoFile.write(corpusSize)
->>>>>>> FETCH_HEAD
 
 	print "\nWriting complete.\n\n"
 
