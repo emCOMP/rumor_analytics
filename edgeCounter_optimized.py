@@ -300,8 +300,8 @@ def countMongo(mongoIter):
 			#print "Pair Time: ", (((pairF-pairS)/tTime)*100), "%"
 			#print "Count Time: ", (((countF-countS)/tTime)*100), "%"
 
-			if i == 1000000:
-				break;
+			#if i == 1000000:
+			#	break;
 		i += 1
 
 	return (pairCounts, pairCorpus)

@@ -1,9 +1,9 @@
 import graphlab as gl
 import graphlab.aggregate as agg
 
-baseline_path = "/Users/Logan/Code/rumor_analytics/csv/baseline_jan6_e.csv"
-rumor_path = "/Users/Logan/Code/rumor_analytics/baseline_compare_e.csv"
-rumor_vert_path = "/Users/Logan/Code/rumor_analytics/baseline_compare_v.csv"
+baseline_path = "/home/jim/dev/rumor_analytics/baseline_jan6_e_wNames.csv"
+rumor_path = "/home/jim/dev/rumor_analytics/time_test_compare_e.csv"
+rumor_vert_path = "/home/jim/dev/rumor_analytics/time_test_compare_v.csv"
 
 baseline_edges = gl.SFrame.read_csv(baseline_path, True)
 rumor_edges = gl.SFrame.read_csv(rumor_path, True)
@@ -13,7 +13,7 @@ rumor_verts = gl.SFrame.read_csv(rumor_vert_path, True)
 baseline_edges.head()
 rumor_edges.head()
 
-#To get the subgraph of the baseline data 
+#To get the subgraph of the baseline data
 #which corresponds to our rumor data, we will filter the baseline edge-list
 #by both of the 'Word' columns of our rumor data.
 
@@ -43,7 +43,7 @@ combined.add_column(edge_difference,'Difference')
 combined.head()
 
 #Now we'll find some interesting rows to look at by looking for big differences.
-#Using topk() to get the highest difference values. 
+#Using topk() to get the highest difference values.
 #***It might be interesting to look at high magnitude negative values as well in the future.
 interesting = combined.topk('Difference', 100)
 
