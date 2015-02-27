@@ -222,7 +222,7 @@ def randomMongo(db):
 def main():
 	#Mongo Setup
 	dbclient = MongoClient('z')
-	db = dbclient.new_boston
+	db = dbclient.sydneysiege
 	mongo_config = db.tweets
 	tweetIter = randomMongo(mongo_config)
 
