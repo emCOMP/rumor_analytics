@@ -294,13 +294,13 @@ def randomMongo(db):
                 # start from beginning of dataset
                 start = db.find().limit(1).sort('created_ts',1).next()['created_ts'].replace(second=0)
                 # start from set time period
-                #start = datetime.datetime(year=2013,month=4,day=15,hour=19,minute=0)
+                #start = datetime.datetime(year=2013,month=4,day=19,hour=3,minute=0)
 
                 # end at set time
-                end = datetime.datetime(year=2013,month=4,day=15,hour=21,minute=40)
+                end = datetime.datetime(year=2013,month=4,day=19,hour=3,minute=0)
 
                 # end at time difference from start time
-                #end = start + datetime.timedelta(days=1)
+                #end = start + datetime.timedelta(hours=1)
                 if start:
                         query = {
                                 "created_ts":{
