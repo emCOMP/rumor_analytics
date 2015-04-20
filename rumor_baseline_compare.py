@@ -1,8 +1,11 @@
 import graphlab as gl
 
-baseline_path = "/Users/Logan/Code/DRG/workspace/new_baseline/new_baseline_e_wNames.csv"
-rumor_path = "/Users/Logan/Code/DRG/workspace/csv/no_rt_e_wNames.csv"
-rumor_vert_path = "/Users/Logan/Code/DRG/workspace/csv/no_rt_v.csv"
+base_name = 'sunil_1h'
+base_path = '/home/jim/dev/rumor_analytics/data/'
+baseline_path = base_path + "girl_running_baseline_1h_e_wNames.csv"
+rumor_path = base_path + base_name + "_e_wNames.csv"
+rumor_vert_path = base_path + base_name + "_v.csv"
+full_out = 'data/sunil_running_compare_1h.csv'
 
 baseline_edges = gl.SFrame.read_csv(baseline_path, True)
 rumor_edges = gl.SFrame.read_csv(rumor_path, True)
@@ -11,7 +14,7 @@ rumor_verts = gl.SFrame.read_csv(rumor_vert_path, True)
 baseline_edges.head()
 rumor_edges.head()
 
-#To get the subgraph of the baseline data 
+#To get the subgraph of the baseline data
 #which corresponds to our rumor data, we will filter the baseline edge-list
 #by both of the 'Word' columns of our rumor data.
 
@@ -66,7 +69,7 @@ combined.head()
 edge_difference = combined.apply(lambda x: float(x['Co-occurrence']) - float(x['Baseline']))
 combined.add_column(edge_difference,'Difference')
 
-#Find the point where 
+#Find the point where
 combined_diff = combined.select_column('Difference')
 combined_max = combined_diff.max()
 
@@ -79,9 +82,14 @@ outlier_col = combined.apply(lambda x: bool(x['Difference']>= z_threshold))
 combined.add_column(outlier_col,'is_outlier')
 print combined.head()
 
+
+
 interesting = combined.filter_by([True],'is_outlier')
 
-combined.save('boston_no_rt_full.csv','csv')
+# gephi code
+combined.remove_columns(['Co-occurrence','Baseline','is_outlier'])
+combined.rename({'Word 1':'source','Word 2':'target','Difference':'weight'})
+combined.save(full_out,format='csv')
 
 interesting_gl = interesting.topk('Difference', 110)
 
@@ -104,4 +112,3 @@ differenceGraph.show(vlabel='__id', elabel='Co-occurrence', elabel_hover=True)
 
 interesting.remove_columns(['Co-occurrence','Baseline','is_outlier'])
 interesting.save('boston_outliers.csv',format='csv')
-
