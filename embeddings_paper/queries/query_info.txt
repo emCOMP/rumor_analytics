@@ -1,0 +1,29 @@
+Parameter Values:
+
+TOP_N: 10 <- Number of new terms to consider for each term.
+MAX_DEPTH: 2 <- Max number of recursions to look for new terms.
+
+x <- Controls how many terms in the current query must be similar to a term to be pulled in as OR
+min_cosine <- Controls how similar a term must be to AT LEAST ONE term in the current query to be pulled in at all.
+
+
+Suicide:
+	x: 0.7
+	min_cosine: 0.65
+
+Airspace:
+	x: 0.7
+	min_cosine: 0.7
+
+Hadley:
+	###This one suffers because there are only two seed terms.
+	x: 0.6
+	min_cosine: 0.5
+
+Lakemba:
+	x: 0.6
+	min_consine: 0.45
+
+Flag:
+	x: 0.6
+	min_cosine: 0.43
