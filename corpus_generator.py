@@ -1,29 +1,3 @@
-'''
-graph_bulder.py
-============================================================
-Description:
-
-Builds a word-co-occurence graph from a database of tweets.
-Outputs three CSVs: 
-	<name>_v.csv -Vertex List
-	<name>_e.csv -Edge List
-	<name>_e_wNames.csv -Edge List with the Word Names rather than id numbers.
-	<name>_info.txt -Information about the set. (Number of items processed, etc.)
-
----------------------------------
-Notes:
-
--Stems all words
--Removes stopwords.
--Ignores tweets containing Spanish stopwords.
-
----------------------------------
-TODO:
-
--Add support for filtering other languages from tweets?
-'''
-
-import csv
 import re
 import random
 from pymongo import MongoClient
@@ -40,6 +14,7 @@ def clean_tweet(tweetText):
 	#Must encode then re-encode because of some funky mixing of strings and unicode in tweets.
 	pTweet = tweetText.encode('UTF-8', 'ignore').decode('UTF-8', 'ignore')
 	pTweet = re.sub(r'@\w+', u'', pTweet);
+	pTweet = re.sub(r'\n', u'', pTweet);
 
 
 	#Remove URLs
@@ -51,7 +26,7 @@ def clean_tweet(tweetText):
 	return pTweet
 
 	#Remove Hashtags NOTE: We are currently treating hashtags as words.
-	#pTweet = re.sub('#\w+', '', pTweet);
+	#pTweet = re.sub('#\w+', '', pTweet)
 
 
 #Takes a list of tweet objects and returns a corpus set object
@@ -61,7 +36,7 @@ def process_tweet(tweetText, tokenizer, stemmer, filterWords):
 
 	#Remove URLs and Emoji, convert to lowercase, convert to unicode string.
 	text = clean_tweet(tweetText);
-	wordList = [w for w in tokenizer.tokenize(text)]
+	wordList = [w for w in tokenizer.tokenize(text) if w != 'rt']
 
 	toFilter = False
 	
@@ -112,36 +87,38 @@ def corpus_from_mongo(mongoIter, outPath):
 	global corpusSize
 	corpusSize = 0
 
-	with open(outPath, 'wb') as out:
-		for tweet in mongoIter:
-			
-			text = tweet['text'];
+	with open(outPath+'_id','wb') as id_out:
+		with open(outPath, 'wb') as out:
+			for tweet in mongoIter:
+				
+				text = tweet['text'];
 
-			#Process the raw paragraph.
-			processed = process_tweet(text, tokenizer, stemmer, filterWords)
+				#Process the raw paragraph.
+				processed = process_tweet(text, tokenizer, stemmer, filterWords)
 
-			#If the tweet did not get thrown out.
-			try:
-				if processed[0]:
-					#Count it toward the corpus size
-					corpusSize += 1
+				#If the tweet did not get thrown out.
+				try:
+					if processed[0]:
+						#Count it toward the corpus size
+						corpusSize += 1
 
-					#Write the proccessed tweet to the file.
-					t = ' '.join(processed)
-					t += '\n'
-					out.write(t)
-			except:
-				continue
+						#Write the proccessed tweet to the file.
+						t = ' '.join(processed)
+						t += '\n----------\n'
+						out.write(t)
+						id_out.write(str(tweet['_id'])+'\n')
+				except:
+					continue
 
-			#Print Progress Updates
-			if i % 2000 == 0 and i > 0:
-				print str(i)+" Rows completed."
+				#Print Progress Updates
+				if i % 2000 == 0 and i > 0:
+					print str(i)+" Rows completed."
 
-			i += 1
-	
+				i += 1
 		
-	print "\nProcessing complete.\n"
-	print "Net tweets processed: ", corpusSize,'\n' #Net meaning after Spanish and Non-English-Unicode-Only tweets are filtered.
+			
+		print "\nProcessing complete.\n"
+		print "Net tweets processed: ", corpusSize,'\n' #Net meaning after Spanish and Non-English-Unicode-Only tweets are filtered.
 
 
 def randomMongo(db):
@@ -160,7 +137,7 @@ def randomMongo(db):
 def main():
 	#Mongo Setup
 	dbclient = MongoClient('z')
-	db = dbclient.WestJet_Hijacking
+	db = dbclient.sydneysiege
 	mongo_config = db.tweets
 	tweetIter = randomMongo(mongo_config)
 

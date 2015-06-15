@@ -1,13 +1,37 @@
 import gensim
 import json
 import pprint
+import re
 from pymongo import MongoClient
 from nltk.stem.snowball import EnglishStemmer
 from nltk.corpus import stopwords
 
 TOP_N = 10
-EVENT_TERMS = []
 MAX_DEPTH = 2
+
+EVENT_TERMS = ['sydneysiege',
+					'martinplacesiege',
+					'haron',
+					'monis',
+					'haronmonis',
+					'illridewithyou',
+					'martinplace',
+					'Sydney',
+					'chocolate shop',
+					'nswpolice',
+					'prime minister',
+					'tony abbott',
+					'witness',
+					'lindt',
+					'siege',
+					'hostage',
+					'hostages',
+					'martin place',
+					'terrorise',
+					'terrorize',
+					'terrorists',
+					'flag'
+				]
 
 #Stems all terms in the input.
 #(Handles multi-word inputs)
@@ -85,9 +109,10 @@ def get_candidates(seeds, cutoff, prev=[]):
 #i is the current recursion depth
 #returns an appropriate dictionary.
 def chain_to_dict(chain, inner_val=[], i=0):
+	#print i,'\t',chain
 	if i < len(chain) - 1:
-		return {chain[i]:chain_to_dict(chain,i+1)}
-	else :
+		return {chain[i]:chain_to_dict(chain, inner_val=inner_val, i=i+1)}
+	else:
 		return {chain[i]:inner_val}
 
 #Recursive helper for expand()
@@ -248,6 +273,7 @@ def _dict_to_query(seed_dict):
 	q = []
 	for k,v in seed_dict.iteritems():
 		cur = [{'text':{'$regex':k, '$options':'i'}}]
+		#cur = [{'text':re.compile(k,re.IGNORECASE)}]
 		if type(v) == dict:
 			if len(v) > 1:
 				tmp = [{'$and':x} if type(x) == list else x for x in _dict_to_query(v)]
@@ -257,11 +283,14 @@ def _dict_to_query(seed_dict):
 		elif type(v) == list:
 			if len(v):
 				cur.append({'text':{'$regex':'|'.join(map(str,v)), '$options':'i'}})
+				#cur.append({'text':re.compile('|'.join(map(str,v)),re.IGNORECASE)})
 		
 		if len(cur) == 1:
 			cur = cur[0]
 		elif len(cur) == 0:
 			cur = None
+		else:
+			cur = {'$and':cur}
 		
 		q.append(cur)
 
@@ -286,7 +315,7 @@ def dict_to_query(seed_dict):
 ##################################################################################
 #---Initialization
 #p = raw_input('Path to embeddings:').strip()
-p = 'westjet.bin'
+p = 'sydney_fixed.bin'
 print 'Loading...'
 model = gensim.models.Word2Vec.load_word2vec_format(p,binary=True)
 print 'Initializing...'
@@ -316,19 +345,19 @@ final_q = json.dumps(query, sort_keys=True,indent=4, separators=(',', ': '))
 print 'Final Query:','\n',final_q
 
 #---Save the query to a file.
-with open('relative_disjointness_query.txt','ab') as f:
+with open('relative_disjointness_query.txt','wb') as f:
 	f.write(final_q)
 
 #---Test the query.
 #########Mongo Setup
 dbclient = MongoClient('z')
-db = dbclient.WestJet_Hijacking
+db = dbclient.sydneysiege
 mongo = db.tweets
 
 print '\nQuery Results:\n'
 cursor = mongo.find(query,{'text':1,'_id':0}).limit(25)
 
 for i,v in enumerate(cursor):
-	print i+1,'\t',v
+	print i+1,'\t',v['text']
 
 exit()

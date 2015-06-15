@@ -1,7 +1,14 @@
 import graphlab as gl
 
+cands = gl.SArray('cand_words')
 sf = gl.load_sframe('sydney_sf')
-sf['bigrams'] = gl.text_analytics.count_ngrams(sf['text'])
+sf['bow'] = gl.text_analytics.count_words(sf['text'])
+# Trim the keys to only the 'highly unusual ones'.
+sf['bow'] = sf['bow'].dict_trim_by_keys(cands, exclude=False)
+# Delete rows with no keys left.
+sf['bow_key'] = sf['bow'].dict_keys()
+sf = sf.filter_by([[]], 'bow_key', exclude=True)
+del sf['bow_key']
 del sf['text']
 del sf['retweeted']
 del sf['time']
@@ -16,9 +23,14 @@ for b in buckets.column_names():
     cur_ids = buckets[b].unique()
     cur_sf = sf.filter_by(cur_ids, 'mongo_id')
     nn = gl.nearest_neighbors.create(
-        cur_sf, label='mongo_id', features=['user_id', 'bigrams'])
-    results = nn.query(cur_sf, label='mongo_id', k=None, radius=1.5)
+        cur_sf, label='mongo_id', features=['user_id', 'bow'])
+    results = nn.query(cur_sf, label='mongo_id', k=None, radius=0.95)
     print results.head(5)
+    print 'Deleting Loops...'
+    results['loops'] = results.apply(
+        lambda x: x['query_label'] == x['reference_label'])
+    results = results.filter_by([0], 'loops')
+    del results['loops']
     results.save('buckets/' + b)
 print 'Nearest Neighbors Complete!\n'
 # Create Graphs

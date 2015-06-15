@@ -93,7 +93,7 @@ for seed,term_list in seed_lists.iteritems():
 
 	revised_lists[seed] = cur_revised_list
 
-query = {'$or':[]}
+query = {'$or':[{'text':{'$regex':t, '$options':'i'}} for t in revised_lists.keys()]}
 print '='*40,'\n','Final Lists\n', '='*40
 for k,v in revised_lists.iteritems():
 	print k,'\t',v
