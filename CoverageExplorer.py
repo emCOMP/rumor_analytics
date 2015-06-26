@@ -12,15 +12,20 @@ class CoverageExplorer(object):
         # Convert from string to datetime.
         sf[time_col] = sf[time_col].apply(lambda x: datetime.datetime.strptime(x, datetime_format))
         # Find the earliest tweet.
-        start = sf[time_col].min()
+        if event_csv:
+            self.start = sf[time_col].min()
         # Add a new column with minutes from collection start.
-        sf[self.chunk_name] = sf[time_col].apply(lambda x: int((x - start).total_seconds())/60)
+        sf[self.chunk_name] = sf[time_col].apply(lambda x: int((x - self.start).total_seconds())/60)
         # Calculate the counts per unique timestamp
         counts = sf.groupby(self.chunk_name,{self.count_name:agg.COUNT(id_col)}).sort(self.chunk_name)
-        
+
         if event_csv:
-            self.event_rows = sf[[self.chunk_name]]
+            self.event_rows = counts[[self.chunk_name]]
+        
         else:
+            # Normalize Count Magnitude
+            counts[self.count_name] = counts[self.count_name]/ float(counts[self.count_name].max())
+            counts[self.count_name] = counts[self.count_name] * self.event_counts[self.count_name].mean()
             counts = self.event_rows.join(counts, on=self.chunk_name, how='left')
             counts = counts.fillna(self.count_name, 0)
 
@@ -49,13 +54,15 @@ class CoverageExplorer(object):
         return val
 
     def csv_to_counts(self, csv_path, event_csv=False):
-        sf = gl.SFrame.read_csv(csv_path, header=True)
+        sf = gl.SFrame.read_csv(csv_path, header=True, verbose=False)
+
+        # Query the user for which columns are which.  
         id_col_name = self.__user_select_column__(
-            message='Which column contains the database id?',
-            col_names=sf.column_names())
+           message='Which column contains the database id?',
+           col_names=sf.column_names())
         time_col_name = self.__user_select_column__(
-            message='Which column contains the time of creation?',
-            col_names=sf.column_names())
+           message='Which column contains the time of creation?',
+           col_names=sf.column_names())
 
         return self.__counts_over_time__(sf, id_col=id_col_name, time_col=time_col_name, event_csv=event_csv)
 
@@ -70,7 +77,7 @@ class CoverageExplorer(object):
         # Process the event CSV.
         self.event_counts = self.csv_to_counts(event_csv, event_csv=True)
         self.event_y = list(self.event_counts[self.count_name])
-        self.event_x = self.event_counts.num_rows()
+        self.event_x = range(self.event_counts.num_rows())
 
 
     def generate_comparison(self, rumor_csv_path):
@@ -79,15 +86,15 @@ class CoverageExplorer(object):
 
         # Process rumor CSV.
         rumor_counts = self.csv_to_counts(rumor_csv_path)
-        rumor_x = rumor_counts.num_rows()
+        rumor_x = range(rumor_counts.num_rows())
         rumor_y = list(rumor_counts[self.count_name])
         fig, ax = plt.subplots()
         ax.bar(self.event_x, self.event_y)
         ax.bar(rumor_x, rumor_y, color=[1,0,0], fc=[1,0,0], ec=[1,0,0])
         plt.ylabel(self.count_name)
         plt.xlabel(self.chunk_name)
-        plt.title(str(event_name)+' Coverage')
-        plt.savefig(f_name, format='pdf')
+        plt.title(str(self.event_name)+' Coverage')
+        plt.savefig(f_name+'.pdf', format='pdf')
         print 'Saving Complete!'
 
 def main(args):
