@@ -80,7 +80,7 @@ class NNGraphHierarchy(object):
                          used to find a representative node for each
                          connected component of the graph hierarchy.
     '''
-    def __init__(self, radius=0.95, k_limit=None, rep_fn='in_degree', caching=True):
+    def __init__(self, radius=1000000, k_limit=None, rep_fn='in_degree', caching=True):
         self.sf = None
         self.label = None
         self.bin_sfs = None
@@ -90,6 +90,7 @@ class NNGraphHierarchy(object):
         self.reps = gl.SArray(dtype=str)
         self.hier_graph = None
         self.caching = caching
+        self.num_bins = 0
 
     def __split_bins__(self, sf, split_column, num_bins=10):
         sf.rename({split_column: 'bin'})
@@ -122,7 +123,7 @@ class NNGraphHierarchy(object):
 
         return clean_sf
 
-    def __get_bin_neighbors__(self, sf, label, k_limit=None):
+    def __get_bin_neighbors__(self, sf, label, delete_loops=True, hier=False):
 
         # Get feature column list.
         features = sf.column_names()
@@ -131,17 +132,32 @@ class NNGraphHierarchy(object):
 
         # Compute the nearest neighbors
         nn = gl.nearest_neighbors.create(sf, label=label, features=features)
-        results = nn.query(sf, label=label, k=k_limit, radius=self.radius)
+        if hier:
+            radius = None
+            # This will try to give a similar number of connected components at the hier level.
+            # To what we would see in each individual bucket.
+            avg_component_count = sf.num_rows() / self.num_bins
+            k = sf.num_rows() / avg_component_count
+            print '!!! Hier Step !!! Using K = ', k
+        else:
+            radius = self.radius
+            k = None
+
+        results = nn.query(sf, label=label, k=k, radius=radius)
+
+        print 'Before Culling'
+        print results
 
         if delete_loops:
             # Remove loops from the result
             print 'Deleting Loops...'
             results['non_loop'] = results.apply(
                 lambda x: None if x['query_label'] == x['reference_label'] else True)
-            results = results.dropna(columns='non_loop')
-            del results['non_loop']
+            results = results.dropna
 
-        
+        print 'After Culling'
+        print results
+
         return results
 
     # sf is the bin dataset
@@ -167,8 +183,8 @@ class NNGraphHierarchy(object):
         else:
              g.vertices[col_name] = tmp + g.vertices['bin']
 
-        print 'Items:\t',g.vertices.num_rows(),'Components:\t',len(g.vertices['component_id'].unique())
-        
+        print 'Items:\t',g.vertices.num_rows(),'Components:\t', len(g.vertices['component_id'].unique())
+
         return g
 
     # Returns an SArray with the ids of the representatives.
@@ -258,7 +274,7 @@ class NNGraphHierarchy(object):
         # Split the data into bins.
         self.sf, self.bin_sfs = self.__split_bins__(
             sf, split_column, num_bins)
-        self.num_bins = str(len(self.bin_sfs))
+        self.num_bins = int(num_bins)
 
         # We will place the results of processing each bucket
         # into this SFrame so when the loop completes it will
@@ -266,7 +282,7 @@ class NNGraphHierarchy(object):
         proccessed_sf = gl.SFrame()
         # For each bin...
         for i, b in enumerate(self.bin_sfs):
-            print 'Processing bin ' + str(i) + ' of ' + self.num_bins
+            print 'Processing bin ' + str(i) + ' of ' + str(self.num_bins)
             # Construct a nearest neighbors graph.
             nn = self.__get_bin_neighbors__(b, label)
             g = self.__construct_bin_graph__(sf=b, nn_sf=nn, label=label)
@@ -294,25 +310,74 @@ class NNGraphHierarchy(object):
         print rep_sf
         # Construct the nearest neighbors graph for the
         # union of all the representatives.
-        nn = self.__get_bin_neighbors__(rep_sf, label)
+        nn = self.__get_bin_neighbors__(rep_sf, label, hier=True)
         g = self.__construct_bin_graph__(sf=rep_sf, nn_sf=nn, label=label)
         g = self.__add_bin_component_ids__(g, hier=True)
         self.hier_graph = g
+        self.hier_graph.save('final/hier_graph')
 
         print 'Sorting Components...'
         #Store a list of which components belong to which upper-heirarchy component.
         self.hier_membership = g.vertices[['component_id','hier_id']].groupby(
             'hier_id',{'members': agg.CONCAT('component_id')})
+        self.hier_membership.save('final/hier_membership')
 
         print 'Propagating labels...'
         # Propagate the hierarchy labels to all of the data.
         self.sf = self.__map_hierarchy__(g,self.sf)
 
+def accuracy_report(sf, component_col='hier_id'):
+    print 'Calculating Accuracy...'
+    rel = gl.SFrame.read_csv('sydney_rumors.csv')
+    rumors = rel['rumor'].unique()
+    rt = {}
+
+    for r in rumors:
+        rt[r] = rel.filter_by([r], 'rumor')['mongo_id']
+
+    accuracy = {}
+    for k, v in rt.iteritems():
+        results = sf.filter_by(v, 'mongo_id')
+        rel_counts = results.groupby(
+            'component_id', operations={'count': agg.COUNT()}).sort('count', False)
+        accuracy[k] = str(rel_counts['count'].sketch_summary())
+
+    with open('accuracy_results.txt', 'wb') as f:
+        line = '-'*40
+        for k, v in accuracy.iteritems():
+            f.write(str(k)+'\n\n\n'+v+'\n'+line)
+
+
 def test():
-    sf = gl.load_sframe('sydney_test')
-    nnh = NNGraphHierarchy()
-    nnh.fit(sf, label='mongo_id', split_column='time', num_bins=20)
-    nnh.sf.save('test_results')
+    sf = gl.load_sframe('sydney_processed')
+    
+    # Use 10% of the data.
+    sf = sf.random_split(0.01)[0]
+
+    # Find a good radius
+    print 'Finding radius...'
+    tmp = sf.random_split(0.1)[0]
+    label = 'mongo_id'
+    features = sf.column_names()
+    features.remove(label)
+    k_nn = gl.nearest_neighbors.create(tmp, label=label, features=features)
+    results = k_nn.query(sf, label=label, k=100)
+    results['non_loop'] = results.apply(
+                lambda x: None if x['query_label'] == x['reference_label'] else True)
+    results = results.dropna(columns='non_loop')
+    del results['non_loop']
+    radius = results['distance'].mean() + (results['distance'].std() * 1.)
+    print 'Using Radius:\t', radius
+
+    del k_nn
+    del results
+    del tmp
+
+    # Run the algorithm
+    nnh = NNGraphHierarchy(radius=radius)
+    nnh.fit(sf, label=label, split_column='time', num_bins=100)
+    nnh.sf.save('final/final_results')
+    accuracy_report(nnh.sf)
     print 'Success!'
     exit()
 
