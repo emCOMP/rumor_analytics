@@ -7,7 +7,9 @@ from graphlab.toolkits.feature_engineering import FeatureBinner
 '''
 Function:
         Creates a hash from the provided string.
-        Strings composed of two equal-length parts will recieve the same hash:
+        Strings composed of two equal-length parts will recieve the same
+        hash regardless of the order in which the parts appear:
+
             hash(<a><b>) == hash(<b><a>) if len(<a>) == len(<b>)
 
             Ex:
@@ -18,21 +20,22 @@ Function:
 Parameters:
     item <string>: The item to be hashed.
 '''
+
+
 def couple_hash(item):
     if type(item) != str:
         try:
             item = str(item)
         except:
             raise TypeError('item cannot be coverted to str')
-    #Our Hash
+    # Our Hash
     h = 0
     l = len(item)
     if l % 2 != 0:
-        half = l/2
         item += chr(l)
         l += 1
-    for i in xrange(l/2 -1):
-        char_val = ord(item[i]) + ord(item[(l/2) + i])
+    for i in xrange(l / 2 - 1):
+        char_val = ord(item[i]) + ord(item[(l / 2) + i])
         h = 33 * h ^ char_val
     return h
 
@@ -66,6 +69,8 @@ nearest nieghbors following this proceedure:
 TODO: Do representatives need to be separated by bin if the bin_id
       is baked into the component_id?
 '''
+
+
 class NNGraphHierarchy(object):
 
     '''
@@ -80,6 +85,7 @@ class NNGraphHierarchy(object):
                          used to find a representative node for each
                          connected component of the graph hierarchy.
     '''
+
     def __init__(self, radius=1000000, k_limit=None, rep_fn='in_degree', caching=True):
         self.sf = None
         self.label = None
@@ -110,13 +116,14 @@ class NNGraphHierarchy(object):
         sf <SFrame>: The edgelist.
         delete_loops <bool>: Whether loops should be deleted.
     '''
+
     def __clean_edgelist__(self, sf):
         # This new column contains None for loops and a hash for edges.
         # Hashes for edges between the same vertices are identical:
         #       hash(A -> B) == hash(B -> A)
         sf['cleaning'] = sf.apply(
-                lambda x: None if x['query_label'] == x['reference_label'] 
-                            else couple_hash(x['query_label']+x['reference_label']))
+            lambda x: None if x['query_label'] == x['reference_label']
+            else couple_hash(x['query_label'] + x['reference_label']))
         keepers = sf['cleaning'].dropna().unique()
         # We drop the None values(loops), and filter by unique edges.
         clean_sf = sf.filter_by(keepers, 'cleaning')
@@ -129,6 +136,9 @@ class NNGraphHierarchy(object):
         features = sf.column_names()
         features.remove(label)
         features.remove('bin')
+
+        if hier:
+            features.remove('component_id')
 
         # Compute the nearest neighbors
         nn = gl.nearest_neighbors.create(sf, label=label, features=features)
@@ -151,9 +161,13 @@ class NNGraphHierarchy(object):
         if delete_loops:
             # Remove loops from the result
             print 'Deleting Loops...'
+            # Add a marker column
             results['non_loop'] = results.apply(
                 lambda x: None if x['query_label'] == x['reference_label'] else True)
-            results = results.dropna
+            results = results.dropna(columns='non_loop')
+
+        # Delete the marker column
+        del results['non_loop']
 
         print 'After Culling'
         print results
@@ -181,9 +195,9 @@ class NNGraphHierarchy(object):
         if hier:
             g.vertices[col_name] = tmp + 'h'
         else:
-             g.vertices[col_name] = tmp + g.vertices['bin']
+            g.vertices[col_name] = tmp + g.vertices['bin']
 
-        print 'Items:\t',g.vertices.num_rows(),'Components:\t', len(g.vertices['component_id'].unique())
+        print 'Items:\t', g.vertices.num_rows(), 'Components:\t', len(g.vertices['component_id'].unique())
 
         return g
 
@@ -200,7 +214,7 @@ class NNGraphHierarchy(object):
 
             # TODO: Find a way to avoid adding and deleting this column.
             del g.vertices['in_degree']
-            
+
             return reps['rep']
 
         # Switch to map rep_fn parameter to the functions.
@@ -225,36 +239,36 @@ class NNGraphHierarchy(object):
         g <SGraph>: The upper-hierarchy graph which should be mapped onto the dataset
         sf <SFrame>: The dataset onto which the heirarchy labels will be mapped.
     '''
+
     def __map_hierarchy__(self, g, sf):
         # Map the hier_graph results to the whole dataset.
-        hier_verts = g.vertices[['component_id','hier_id']]
-        hier_members = sf.join(hier_verts,on='component_id')
+        hier_verts = g.vertices[['component_id', 'hier_id']]
+        hier_members = sf.join(hier_verts, on='component_id')
 
         return hier_members
 
     def __cache_progress__(self, data_items, step):
         print 'Caching...'
         for d in zip(data_items):
-            d.save('NNGH_cache/'+n)
-        
+            d.save('NNGH_cache/' + step)
+
         with open('NNGH_cache/step', 'wb') as f:
             f.write(str(step))
 
     def __hash_dataset__(self, path):
         BLOCKSIZE = 65536
         hasher = hashlib.md5()
-        paths = [ os.path.join(path,f) for f in os.listdir(path) 
-                    if os.path.isfile(os.path.join(path,f)) ]
-        
+        paths = [os.path.join(path, f) for f in os.listdir(path)
+                 if os.path.isfile(os.path.join(path, f))]
+
         for p in paths:
             with open(p, 'rb') as f:
                 buf = f.read(BLOCKSIZE)
                 while len(buf) > 0:
                     hasher.update(buf)
                     buf = f.read(BLOCKSIZE)
-        
-        return hasher.hexdigest()
 
+        return hasher.hexdigest()
 
     '''
     Parameters:
@@ -270,6 +284,7 @@ class NNGraphHierarchy(object):
 
         num_bins <integer>: The number of bins to split the dataset into.
     '''
+
     def fit(self, sf, label, split_column, num_bins):
         # Split the data into bins.
         self.sf, self.bin_sfs = self.__split_bins__(
@@ -284,8 +299,8 @@ class NNGraphHierarchy(object):
         for i, b in enumerate(self.bin_sfs):
             print 'Processing bin ' + str(i) + ' of ' + str(self.num_bins)
             # Construct a nearest neighbors graph.
-            nn = self.__get_bin_neighbors__(b, label)
-            g = self.__construct_bin_graph__(sf=b, nn_sf=nn, label=label)
+            nn_sf = self.__get_bin_neighbors__(b, label)
+            g = self.__construct_bin_graph__(sf=b, nn_sf=nn_sf, label=label)
             # Find the connected components.
             g = self.__add_bin_component_ids__(g)
             # Find the component representatives and store them in the model.
@@ -307,24 +322,26 @@ class NNGraphHierarchy(object):
         print 'Constructing Hierarchy Graph...'
         # Get an SFrame containing only the representatives.
         rep_sf = self.sf.filter_by(self.reps, 'mongo_id')
-        print rep_sf
+
         # Construct the nearest neighbors graph for the
         # union of all the representatives.
-        nn = self.__get_bin_neighbors__(rep_sf, label, hier=True)
-        g = self.__construct_bin_graph__(sf=rep_sf, nn_sf=nn, label=label)
+        nn_sf = self.__get_bin_neighbors__(rep_sf, label, hier=True)
+        g = self.__construct_bin_graph__(sf=rep_sf, nn_sf=nn_sf, label=label)
         g = self.__add_bin_component_ids__(g, hier=True)
         self.hier_graph = g
         self.hier_graph.save('final/hier_graph')
 
         print 'Sorting Components...'
-        #Store a list of which components belong to which upper-heirarchy component.
-        self.hier_membership = g.vertices[['component_id','hier_id']].groupby(
-            'hier_id',{'members': agg.CONCAT('component_id')})
+        # Store a list of which components belong to which upper-heirarchy
+        # component.
+        self.hier_membership = g.vertices[['component_id', 'hier_id']].groupby(
+            'hier_id', {'members': agg.CONCAT('component_id')})
         self.hier_membership.save('final/hier_membership')
 
         print 'Propagating labels...'
         # Propagate the hierarchy labels to all of the data.
-        self.sf = self.__map_hierarchy__(g,self.sf)
+        self.sf = self.__map_hierarchy__(g, self.sf)
+
 
 def accuracy_report(sf, component_col='hier_id'):
     print 'Calculating Accuracy...'
@@ -343,14 +360,14 @@ def accuracy_report(sf, component_col='hier_id'):
         accuracy[k] = str(rel_counts['count'].sketch_summary())
 
     with open('accuracy_results.txt', 'wb') as f:
-        line = '-'*40
+        line = '-' * 40
         for k, v in accuracy.iteritems():
-            f.write(str(k)+'\n\n\n'+v+'\n'+line)
+            f.write(str(k) + '\n\n\n' + v + '\n' + line)
 
 
 def test():
     sf = gl.load_sframe('sydney_processed')
-    
+
     # Use 10% of the data.
     sf = sf.random_split(0.01)[0]
 
@@ -363,7 +380,7 @@ def test():
     k_nn = gl.nearest_neighbors.create(tmp, label=label, features=features)
     results = k_nn.query(sf, label=label, k=100)
     results['non_loop'] = results.apply(
-                lambda x: None if x['query_label'] == x['reference_label'] else True)
+        lambda x: None if x['query_label'] == x['reference_label'] else True)
     results = results.dropna(columns='non_loop')
     del results['non_loop']
     radius = results['distance'].mean() + (results['distance'].std() * 1.)
@@ -382,4 +399,4 @@ def test():
     exit()
 
 if __name__ == '__main__':
-        test()
+    test()
