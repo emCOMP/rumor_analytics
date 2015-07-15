@@ -21,7 +21,6 @@ Parameters:
     item <string>: The item to be hashed.
 '''
 
-
 def couple_hash(item):
     if type(item) != str:
         try:
@@ -66,8 +65,15 @@ nearest nieghbors following this proceedure:
 7. Treat components who's representatives are in the same component as
    time-snapshots of the same component.
 
-TODO: Do representatives need to be separated by bin if the bin_id
-      is baked into the component_id?
+
+TODO:
+    - Fix find_radius method integration.
+      (Should be used automatically if 'AUTO' is passed to fit())
+    - Replace manual loop deletions with calls to __clean_edgelist__().
+    - Finish caching methods and integrate them.
+    - Remove any remaining DRG specific fixes/magic numbers and generalize.
+
+    - Migrate couple_hash() and accuracy_report() to another file?
 '''
 
 
@@ -98,6 +104,24 @@ class NNGraphHierarchy(object):
         self.caching = caching
         self.num_bins = 0
 
+    '''
+    Function:
+        Splits the dataset 'sf' into 'num_bins' bins based on
+        the values in the column 'split_column'.
+
+    Returns:
+        <Tuple(SFrame, [SFrame, ...])>:
+            A tuple containing:
+                1. The input 'sf' with 'split_column' replaced with strings
+                    corresponding to bins.
+                2. A list containing an SFrame for each bin.
+
+    Parameters:
+        sf <SFrame>: The dataset of which to find a good radius.
+        label <string>: The name of the id or 'label' column.
+        z_val <float>: The z-score to find. (The number of STDs above the mean)
+    '''
+
     def __split_bins__(self, sf, split_column, num_bins=10):
         sf.rename({split_column: 'bin'})
         binner = gl.feature_engineering.create(
@@ -106,18 +130,64 @@ class NNGraphHierarchy(object):
         bin_sfs = []
 
         for b in binner_sf['bin'].unique():
-            bin_sfs.append(binner_sf.filter_by([b], 'bin'))
+            tmp = binner_sf[binner_sf['bin'] == b]
+            bin_sfs.append(tmp)
 
         return binner_sf, bin_sfs
 
     '''
-    Function: Removes loops and duplicate edges from the edgelist provided.
+    Function:
+        Finds an acceptable radius to use for nearest neighbors
+        on the given dataset by running k=100 nearest neighbors
+        on 10-percent of the data, and finding the distance <z_val> stds
+        above the mean of the result.
+
+
+    Parameters:
+        sf <SFrame>: The dataset of which to find a good radius.
+        label <string>: The name of the id or 'label' column.
+        z_val <float>: The z-score to find. (The number of STDs above the mean)
+    '''
+
+    def find_radius(self, sf, label, z_val=1.):
+        print 'Finding radius...'
+
+        # Take 10-percent of the data.
+        tmp = sf.sample(0.005)
+
+        # Setup parameters.
+        features = sf.column_names()
+        features.remove(label)
+
+        # Create the model and perform the query.
+        k_nn = gl.nearest_neighbors.create(tmp, label=label, features=features)
+        results = k_nn.query(sf, label=label, k=100)
+
+        # Clean loops.
+        results['non_loop'] = results.apply(
+            lambda x: None if x['query_label'] == x['reference_label'] else True)
+        results = results.dropna(columns='non_loop')
+
+        if z_val:
+            # Find one above the mean.
+            radius = results['distance'].mean() + (results['distance'].std() * float(z_val))
+
+        else:
+            # Return the value at the 75% quantile.
+            radius = gl.Sketch(results['distance']).quantile(0.75)
+        return radius
+
+
+    '''
+    Function: 
+        Removes loops and duplicate edges from the edgelist provided.
+    
     Parameters:
         sf <SFrame>: The edgelist.
         delete_loops <bool>: Whether loops should be deleted.
     '''
 
-    def __clean_edgelist__(self, sf):
+    def __clean_edgelist__(self, sf, delete_loops=True):
         # This new column contains None for loops and a hash for edges.
         # Hashes for edges between the same vertices are identical:
         #       hash(A -> B) == hash(B -> A)
@@ -137,21 +207,19 @@ class NNGraphHierarchy(object):
         features.remove(label)
         features.remove('bin')
 
+        k = None
+
         if hier:
             features.remove('component_id')
 
         # Compute the nearest neighbors
         nn = gl.nearest_neighbors.create(sf, label=label, features=features)
+
         if hier:
-            radius = None
-            # This will try to give a similar number of connected components at the hier level.
-            # To what we would see in each individual bucket.
-            avg_component_count = sf.num_rows() / self.num_bins
-            k = sf.num_rows() / avg_component_count
-            print '!!! Hier Step !!! Using K = ', k
+            radius = self.find_radius(sf, label=label, z_val=None)
+            k = 3
         else:
             radius = self.radius
-            k = None
 
         results = nn.query(sf, label=label, k=k, radius=radius)
 
@@ -197,7 +265,7 @@ class NNGraphHierarchy(object):
         else:
             g.vertices[col_name] = tmp + g.vertices['bin']
 
-        print 'Items:\t', g.vertices.num_rows(), 'Components:\t', len(g.vertices['component_id'].unique())
+        print 'Items:\t', g.vertices.num_rows(), 'Components:\t', len(g.vertices[col_name].unique())
 
         return g
 
@@ -233,7 +301,14 @@ class NNGraphHierarchy(object):
             )
 
     '''
-    Propagates the upper-hierarchy component_id labels to the entire dataset sf.
+    Function:
+        Propagates the top-level component_id labels from graph 'g'
+        to the entire dataset 'sf'.
+
+    Returns:
+        <SFrame>:
+            The input dataset 'sf' with the top-level component_id's
+            mapped onto it in the new column "hier_id".
 
     Parameters:
         g <SGraph>: The upper-hierarchy graph which should be mapped onto the dataset
@@ -367,32 +442,16 @@ def accuracy_report(sf, component_col='hier_id'):
 
 def test():
     sf = gl.load_sframe('sydney_processed')
-
-    # Use 10% of the data.
-    sf = sf.random_split(0.01)[0]
-
-    # Find a good radius
-    print 'Finding radius...'
-    tmp = sf.random_split(0.1)[0]
     label = 'mongo_id'
-    features = sf.column_names()
-    features.remove(label)
-    k_nn = gl.nearest_neighbors.create(tmp, label=label, features=features)
-    results = k_nn.query(sf, label=label, k=100)
-    results['non_loop'] = results.apply(
-        lambda x: None if x['query_label'] == x['reference_label'] else True)
-    results = results.dropna(columns='non_loop')
-    del results['non_loop']
-    radius = results['distance'].mean() + (results['distance'].std() * 1.)
-    print 'Using Radius:\t', radius
 
-    del k_nn
-    del results
-    del tmp
+    # Use 1% of the data.
+    sf = sf.sample(0.5)
 
     # Run the algorithm
-    nnh = NNGraphHierarchy(radius=radius)
-    nnh.fit(sf, label=label, split_column='time', num_bins=100)
+    nnh = NNGraphHierarchy()
+    radius = nnh.find_radius(sf, label=label, z_val=1.)
+    nnh.radius = radius
+    nnh.fit(sf, label=label, split_column='time', num_bins=150)
     nnh.sf.save('final/final_results')
     accuracy_report(nnh.sf)
     print 'Success!'
