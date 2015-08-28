@@ -1,7 +1,7 @@
 import graphlab as gl
 import graphlab.aggregate as agg
-from NNGH_evaluation import rumor_component_distribution
-from NNGH_evaluation import top_level_report
+from nngh_evaluation import rumor_component_distribution
+from nngh_evaluation import top_level_report
 
 
 class NNGraphHierarchy(object):
@@ -47,9 +47,7 @@ class NNGraphHierarchy(object):
 
         # Remove loops.
         sample = self._remove_loops(sample)
-
         if z_val:
-            # Find z-stds above the mean.
             z_shift = sample['distance'].std() * float(z_val)
             radius = sample['distance'].mean() + z_shift
         else:
@@ -182,11 +180,11 @@ class NNGraphHierarchy(object):
 
         # Make a vertex SFrame.
         verts = edgelist[src_col].append(edgelist[dst_col])
-        verts = verts.unique()
+        vert_sf = sf.filter_by(verts.unique(), self.label)
 
         # Make the graph.
         g = gl.SGraph(
-            verts,
+            vert_sf,
             edgelist,
             vid_field=self.label,
             src_field=src_col,
@@ -240,7 +238,7 @@ class NNGraphHierarchy(object):
         reps = g.vertices.groupby(
             c_id_header, {'rep': agg.ARGMAX('in_degree', '__id')})
 
-        return reps['rep']
+        return reps['rep'].astype(self.label_type)
 
     def fit(self,
             sf,
@@ -248,8 +246,8 @@ class NNGraphHierarchy(object):
             split_column,
             num_bins,
             path,
+            z_val,
             radius=None,
-            z_val=1.,
             features=None):
         """
         Fits the model.
@@ -285,15 +283,8 @@ class NNGraphHierarchy(object):
             self.sf (SFrame): Upon completion sets the model's 'sf' attribute
                               to be the SFrame described above.
         """
-
         self.label = label
-        # Find a radius if one is not provided.
-        if radius is None:
-            # Use a heurisitc to find a radius.
-            self.radius = self._find_radius(sf, label=label, z_val=z_val)
-        else:
-            self.radius = radius
-
+        self.label_type = type(sf[self.label][0])
         # If no list of feature columns is provided
         # assume all columns except the label are features.
         if features is None:
@@ -302,6 +293,14 @@ class NNGraphHierarchy(object):
         else:
             self.features = features
 
+        # Find a radius if one is not provided.
+        if radius is None:
+            # Use a heurisitc to find a radius.
+            self.radius = self._find_radius(sf, z_val=z_val)
+            print 'Using Radius:\t', self.radius
+        else:
+            self.radius = radius
+
         # Split the data into bins.
         sf, self.bins = self._split_bins(sf, split_column, num_bins)
 
@@ -309,7 +308,7 @@ class NNGraphHierarchy(object):
         # generated as the model proceeds.
         processed_sf = gl.SFrame()
         # Representative nodes chosen from each bin
-        reps = gl.SFrame()
+        reps = gl.SArray(dtype=self.label_type)
         for i, b in enumerate(self.bins):
             print 'Processing bin ' + str(i) + ' of ' + str(num_bins)
             # Construct a nearest neighbors graph.
@@ -317,8 +316,7 @@ class NNGraphHierarchy(object):
             # Find the connected components.
             g = self._find_components(g)
             # Find the component representatives.
-            reps = reps.append(self._bin_representatives(g))
-            # Add
+            reps = reps.append(self._get_representatives(g))
             processed_sf = processed_sf.append(g.get_vertices())
 
         # We're done with the individual bin SFrames now.
@@ -374,7 +372,8 @@ def main(args):
         label=args.label,
         split_column=args.split_column,
         num_bins=args.bins,
-        path=args.output
+        path=args.output,
+        z_val=args.z_val
     )
 
     # Save the results.
@@ -425,7 +424,7 @@ if __name__ == '__main__':
         '-ss', '--sample_size', help="What percentage of the input dataset to use.",
         type=float, default=1.)
     parser.add_argument(
-        '-z', '--z_value', help="The Z-score to use for determining the model's radius.",
+        '-z', '--z_val', help="The Z-score to use for determining the model's radius.",
         type=float, default=1.)
     parser.add_argument(
         '-b', '--bins', help='How many bins to use (for chunking).',
