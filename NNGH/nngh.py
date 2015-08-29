@@ -46,10 +46,13 @@ class NNGraphHierarchy(object):
         sample = k_nn.query(tmp, label=self.label, k=100)
 
         # Remove loops.
-        sample = self._remove_loops(sample)
+        # sample = self._remove_loops(sample)
         if z_val:
-            z_shift = sample['distance'].std() * float(z_val)
-            radius = sample['distance'].mean() + z_shift
+            distances = sample['distance'].dropna()
+            print 'Number of NA:'
+            print len(sample['distance']) - len(distances)
+            z_shift = distances.std() * float(z_val)
+            radius = distances.mean() + z_shift
         else:
             # Default to the value at the 85% quantile.
             radius = gl.Sketch(sample['distance']).quantile(0.85)
@@ -176,7 +179,7 @@ class NNGraphHierarchy(object):
             sf, label=self.label, k=None, radius=radius)
 
         # Remove loops from the edgelist.
-        edgelist = self._remove_loops(edgelist)
+        # edgelist = self._remove_loops(edgelist)
 
         # Make a vertex SFrame.
         verts = edgelist[src_col].append(edgelist[dst_col])
@@ -338,7 +341,7 @@ class NNGraphHierarchy(object):
 
         # Generally, the radius we used for the bins isn't a good choice
         # for the representatives, so we find a new one.
-        rep_radius = self._find_radius(rep_sf, label=label, z_val=z_val)
+        rep_radius = self._find_radius(rep_sf, z_val=z_val)
 
         # Construct a radius graph for the representatives.
         g = self._radius_neighbors_graph(rep_sf, radius=rep_radius)
