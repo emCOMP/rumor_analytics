@@ -18,7 +18,7 @@ class NNGraphHierarchy(object):
         self.hier_graph = None
         self.num_bins = 0
 
-    def _find_radius(self, sf, z_val=None):
+    def _find_radius(self, sf, connectivity, z_val=None):
         """
         Finds an acceptable radius to use for nearest neighbors
         on the given dataset by generating a sample set of distances
@@ -43,11 +43,11 @@ class NNGraphHierarchy(object):
         # Create the model and perform the query.
         k_nn = gl.nearest_neighbors.create(
             tmp, label=self.label, features=self.features)
-        sample = k_nn.query(tmp, label=self.label, k=100)
+        sample = k_nn.query(tmp, label=self.label, k=connectivity)
 
         # Remove loops.
         # sample = self._remove_loops(sample)
-        if z_val:
+        if z_val is not None:
             distances = sample['distance'].dropna()
             print 'Number of NA:'
             print len(sample['distance']) - len(distances)
@@ -56,6 +56,8 @@ class NNGraphHierarchy(object):
         else:
             # Default to the value at the 85% quantile.
             radius = gl.Sketch(sample['distance']).quantile(0.85)
+
+        print 'Using Radius:\t', radius
 
         return radius
 
@@ -81,32 +83,31 @@ class NNGraphHierarchy(object):
         total_rows = sf.num_rows()
         rows_per_bin = total_rows / num_bins
 
-        # This will hold the bin number labels
-        bin_labels = []
+        # See if the number of rows is evenly divisible into num_buckets.
+        evenly_divisible = bool(rows_per_bin * num_bins == total_rows)
+
         # This will hold the SFrames containing the
         # individual bins
         bin_sfs = []
+
         for i in xrange(num_bins):
-            # If it's the last bin.
-            if i == (num_bins - 1):
-                if rows_per_bin * num_bins != total_rows:
-                    extra_rows = total_rows - len(bin_labels)
-                    # Add labels for the extra rows.
-                    bin_labels += [num_bins] * extra_rows
-                    # Take the extras into account when separating
-                    # the SFrame.
-                    bin_start = i * rows_per_bin
-                    bin_sfs.append(sf[bin_start:])
+            # Handle the extra rows at the end if
+            # the dataset doesn't fit evenly into the bins.
+            if not evenly_divisible and i == (num_bins - 1):
+                # Take the extras into account when separating
+                # the SFrame.
+                bin_start = i * rows_per_bin
+                cur_bin = sf[bin_start:]
+                cur_bin['bin'] = gl.SArray.from_const(i, cur_bin.num_rows())
+                bin_sfs.append(cur_bin)
             else:
-                # Add labels to the label list
-                bin_labels += [i] * rows_per_bin
                 # Separate the bin into its own SFrame
                 bin_start = i * rows_per_bin
                 bin_end = (i + 1) * rows_per_bin
-                bin_sfs.append(sf[bin_start:bin_end])
-
-        # Add the label column to the full_dataset
-        sf['bin'] = gl.SArray(bin_labels)
+                cur_bin = sf[bin_start:bin_end]
+                # Add bin labels to the bin itself.
+                cur_bin['bin'] = gl.SArray.from_const(i, rows_per_bin)
+                bin_sfs.append(cur_bin)
 
         return sf, bin_sfs
 
@@ -172,6 +173,7 @@ class NNGraphHierarchy(object):
             (SGraph): a radius nieghbors graph (as described above)
         """
 
+        print 'Determining edges...'
         # Compute the edgelist via nearest neighbors.
         nn = gl.nearest_neighbors.create(
             sf, label=self.label, features=self.features)
@@ -181,13 +183,10 @@ class NNGraphHierarchy(object):
         # Remove loops from the edgelist.
         # edgelist = self._remove_loops(edgelist)
 
-        # Make a vertex SFrame.
-        verts = edgelist[src_col].append(edgelist[dst_col])
-        vert_sf = sf.filter_by(verts.unique(), self.label)
-
+        print 'Constructing graph...'
         # Make the graph.
         g = gl.SGraph(
-            vert_sf,
+            sf,
             edgelist,
             vid_field=self.label,
             src_field=src_col,
@@ -210,8 +209,9 @@ class NNGraphHierarchy(object):
             (SGraph): the input graph <g> with component_id labels
                       added to the vertex SFrame.
         """
+        print 'Locating connected components...'
         # Find the connected components.
-        cc = gl.connected_components.create(g)
+        cc = gl.connected_components.create(g, verbose=False)
         # Add the label column.
         g.vertices[c_id_header] = cc['graph'].vertices['component_id']
         print 'Items:\t', g.vertices.num_rows()
@@ -243,12 +243,43 @@ class NNGraphHierarchy(object):
 
         return reps['rep'].astype(self.label_type)
 
+    def _propagate_hier_labels(self, sf, hier_g):
+        """
+        Propagates the top-level component_ids from the representatives
+        to all of the examples in the componenets which they represent.
+
+        Args:
+            sf (SFrame): The proccessed dataset to map the ids onto.
+            hier_g (SGraph): The top-level graph from which to pull the
+                             component_ids.
+
+        Returns:
+            (SFrame): the input dataset <sf> with the appropriate top-level
+                      component_ids added to each example.
+        """
+        print 'Propagating hierarchy labels...'
+        # Get the relavent information out of the graph's vertices.
+        hier_verts = hier_g.vertices[['bin', 'component_id', 'hier_id']]
+
+        # Create a column in containing both the bin and the low-level
+        # component_id in each of the SFrames.
+        # (Necessary since component_ids are not unique across bins)
+        bin_ids = sf['bin'].astype(str)
+        c_ids = sf['component_id'].astype(str)
+        sf['bin_component'] = bin_ids + '_' + c_ids
+        g_bin_ids = hier_verts['bin'].astype(str)
+        g_c_ids = hier_verts['component_id'].astype(str)
+        hier_verts['bin_component'] = g_bin_ids + '_' + g_c_ids
+
+        return sf.join(hier_verts, on='bin_component')
+
     def fit(self,
             sf,
             label,
             split_column,
             num_bins,
             path,
+            connectivity,
             z_val,
             radius=None,
             features=None):
@@ -299,20 +330,21 @@ class NNGraphHierarchy(object):
         # Find a radius if one is not provided.
         if radius is None:
             # Use a heurisitc to find a radius.
-            self.radius = self._find_radius(sf, z_val=z_val)
-            print 'Using Radius:\t', self.radius
+            self.radius = self._find_radius(sf,
+                                            connectivity=connectivity,
+                                            z_val=z_val)
         else:
             self.radius = radius
 
         # Split the data into bins.
-        sf, self.bins = self._split_bins(sf, split_column, num_bins)
+        sf, bins = self._split_bins(sf, split_column, num_bins)
 
         # A new copy of the dataset containing data (component_ids, etc.)
         # generated as the model proceeds.
         processed_sf = gl.SFrame()
         # Representative nodes chosen from each bin
         reps = gl.SArray(dtype=self.label_type)
-        for i, b in enumerate(self.bins):
+        for i, b in enumerate(bins):
             print 'Processing bin ' + str(i) + ' of ' + str(num_bins)
             # Construct a nearest neighbors graph.
             g = self._radius_neighbors_graph(b, radius=self.radius)
@@ -326,34 +358,41 @@ class NNGraphHierarchy(object):
         del self.bin_sfs
 
         # DEBUG: Check to see if we have preserved sf length.
-        length_comparison = sf.num_rows() == processed_sf.num_rows()
-        print '#DEBUG:\tlen(sf) == len(processed_sf):\t', length_comparison
-        if not length_comparison:
-            print 'sf: ', sf.num_rows()
-            print 'processed_sf: ', processed_sf.num_rows()
+        # length_comparison = sf.num_rows() == processed_sf.num_rows()
+        # print '#DEBUG:\tlen(sf) == len(processed_sf):\t', length_comparison
+        # if not length_comparison:
+        #     print 'sf: ', sf.num_rows()
+        #     print 'processed_sf: ', processed_sf.num_rows()
 
         processed_sf.rename({'__id': label})
 
         print '\nConstructing Hierarchy Graph...\n'
         # Get an SFrame containing only the representatives.
         # (This contains the representatives for components in all bins).
-        rep_sf = processed_sf.filter_by(self.reps, label)
+        rep_sf = processed_sf.filter_by(reps, label)
 
-        # Generally, the radius we used for the bins isn't a good choice
-        # for the representatives, so we find a new one.
-        rep_radius = self._find_radius(rep_sf, z_val=z_val)
+        # --- Generally, the radius we used for the bins isn't a good choice
+        # --- for the representatives, so we find a new one.
+
+        # Try to have about the same ratio of components to examples as
+        # the buckets.
+        # connectivity_ratio = float(connectivity) / processed_sf.num_rows()
+        # rep_connectivity = int(rep_sf.num_rows() * connectivity_ratio)
+        # rep_connectivity = int(processed_sf['in_degree'].mean())
+        # rep_radius = self._find_radius(rep_sf,
+        #                                connectivity=rep_connectivity,
+        #                                z_val=z_val)
+        rep_radius = radius
 
         # Construct a radius graph for the representatives.
         g = self._radius_neighbors_graph(rep_sf, radius=rep_radius)
         # Label the components in the new graph.
-        g = self._find_component_ids(g, c_id_header='hier_id')
+        g = self._find_components(g, c_id_header='hier_id')
         self.hier_graph = g
 
-        print 'Propagating hierarchy labels...'
         # Propagate the top-level component labels from the represenatives
         # to all of the vertices in their respective components.
-        hier_verts = g.vertices[['component_id', 'hier_id']]
-        result = processed_sf.join(hier_verts, on='component_id')
+        result = self._propagate_hier_labels(processed_sf, self.hier_graph)
 
         # Assign the model's SFrame to the final result.
         self.sf = result
@@ -376,6 +415,7 @@ def main(args):
         split_column=args.split_column,
         num_bins=args.bins,
         path=args.output,
+        connectivity=args.connectivity,
         z_val=args.z_val
     )
 
@@ -391,7 +431,6 @@ def main(args):
         rumor_report = rumor_component_distribution(
             nnh.sf,
             related,
-            nnh.hier_membership
         )
         rumor_report.save(args.output + 'rumor_report.csv', format='csv')
 
@@ -427,8 +466,11 @@ if __name__ == '__main__':
         '-ss', '--sample_size', help="What percentage of the input dataset to use.",
         type=float, default=1.)
     parser.add_argument(
+        '-c', '--connectivity', help="The desired average degree of a node in a bin graph",
+        type=int, default=80)
+    parser.add_argument(
         '-z', '--z_val', help="The Z-score to use for determining the model's radius.",
-        type=float, default=1.)
+        type=float, default=0.0)
     parser.add_argument(
         '-b', '--bins', help='How many bins to use (for chunking).',
         type=int, default=100)
