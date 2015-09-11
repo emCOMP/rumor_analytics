@@ -58,6 +58,7 @@ class NNGraphHierarchy(object):
             radius = gl.Sketch(sample['distance']).quantile(0.85)
 
         print 'Using Radius:\t', radius
+        sample['distance'].save('sample_dist')
 
         return radius
 
@@ -416,7 +417,8 @@ def main(args):
         num_bins=args.bins,
         path=args.output,
         connectivity=args.connectivity,
-        z_val=args.z_val
+        z_val=args.z_val,
+        radius=args.radius
     )
 
     # Save the results.
@@ -468,6 +470,9 @@ if __name__ == '__main__':
     parser.add_argument(
         '-c', '--connectivity', help="The desired average degree of a node in a bin graph",
         type=int, default=80)
+    parser.add_argument(
+        '-r', '--radius', help="The desired average degree of a node in a bin graph",
+        type=float, default=None)
     parser.add_argument(
         '-z', '--z_val', help="The Z-score to use for determining the model's radius.",
         type=float, default=0.0)

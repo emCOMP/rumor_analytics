@@ -37,7 +37,6 @@ def rumor_component_distribution(sf, related, component_col='hier_id'):
     # final_result = comp_sizes.groupby(
     #     'hier_id', operations={'tweets': agg.SUM('tweets')})
     final_result = sf.groupby('hier_id', operations={'tweets': agg.COUNT()})
-    print final_result
 
     for k, v in rt.iteritems():
         results = sf.filter_by(v, 'mongo_id')
