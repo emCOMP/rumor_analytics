@@ -383,7 +383,7 @@ class NNGraphHierarchy(object):
         # rep_radius = self._find_radius(rep_sf,
         #                                connectivity=rep_connectivity,
         #                                z_val=z_val)
-        rep_radius = radius
+        rep_radius = self.radius
 
         # Construct a radius graph for the representatives.
         g = self._radius_neighbors_graph(rep_sf, radius=rep_radius)
@@ -468,10 +468,10 @@ if __name__ == '__main__':
         '-ss', '--sample_size', help="What percentage of the input dataset to use.",
         type=float, default=1.)
     parser.add_argument(
-        '-c', '--connectivity', help="The desired average degree of a node in a bin graph",
+        '-c', '--connectivity', help="The desired average degree of a node in a bin graph.",
         type=int, default=80)
     parser.add_argument(
-        '-r', '--radius', help="The desired average degree of a node in a bin graph",
+        '-r', '--radius', help="The desired radius to be used in finding nearest neighbors.",
         type=float, default=None)
     parser.add_argument(
         '-z', '--z_val', help="The Z-score to use for determining the model's radius.",
