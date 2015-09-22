@@ -18,22 +18,20 @@ class NNGraphHierarchy(object):
         self.hier_graph = None
         self.num_bins = 0
 
-    def _find_radius(self, sf, connectivity, z_val=None):
+    def _find_radius(self, sf, connectivity, quantile):
         """
         Finds an acceptable radius to use for nearest neighbors
         on the given dataset by generating a sample set of distances
         (running k=100 nearest neighbors on 10-percent of the data),
-        and finding the distance <z_val> stds above the mean of the sample.
+        and using the value at the <quantile>th quantile of the sample.
 
         Args:
             sf <SFrame>: The dataset for which to find a good radius.
-            z_val <float>: The z-score to find.
-                           (The number of STDs above the mean)
+            quantile <float>: The quantile of the distance sample to take.
+                              (float between 0.0 and 1.0)
 
         Returns:
             (float): The radius found using the above method.
-                     (If no z-value is passed, defaults to the value
-                      at the 85th quantile in the sample instead).
         """
         print 'Finding radius...'
 
@@ -45,17 +43,9 @@ class NNGraphHierarchy(object):
             tmp, label=self.label, features=self.features)
         sample = k_nn.query(tmp, label=self.label, k=connectivity)
 
-        # Remove loops.
-        # sample = self._remove_loops(sample)
-        if z_val is not None:
-            distances = sample['distance'].dropna()
-            print 'Number of NA:'
-            print len(sample['distance']) - len(distances)
-            z_shift = distances.std() * float(z_val)
-            radius = distances.mean() + z_shift
-        else:
-            # Default to the value at the 85% quantile.
-            radius = gl.Sketch(sample['distance']).quantile(0.85)
+        # # Remove loops.
+        # # sample = self._remove_loops(sample)
+        radius = gl.Sketch(sample['distance']).quantile(quantile)
 
         print 'Using Radius:\t', radius
         sample['distance'].save('sample_dist')
@@ -281,7 +271,7 @@ class NNGraphHierarchy(object):
             num_bins,
             path,
             connectivity,
-            z_val,
+            quantile=0.5,
             radius=None,
             features=None):
         """
@@ -298,7 +288,7 @@ class NNGraphHierarchy(object):
             path (str): the path to save progress and output to.
             radius (float): the radius which should be used to threshold
                             the nearest_neighbors calculations.
-            z_val (float): the z-score to use for the radius-finding heurisitc.
+            quantile (float): quantile to use for the radius-finding heurisitc.
             features ([str,]): a list of column names denoting which columns
                                    contain features to be used for
                                    nearest_neighbors calculations.
@@ -333,7 +323,7 @@ class NNGraphHierarchy(object):
             # Use a heurisitc to find a radius.
             self.radius = self._find_radius(sf,
                                             connectivity=connectivity,
-                                            z_val=z_val)
+                                            quantile=quantile)
         else:
             self.radius = radius
 
@@ -417,7 +407,7 @@ def main(args):
         num_bins=args.bins,
         path=args.output,
         connectivity=args.connectivity,
-        z_val=args.z_val,
+        quantile=args.quantile,
         radius=args.radius
     )
 
@@ -474,8 +464,8 @@ if __name__ == '__main__':
         '-r', '--radius', help="The desired radius to be used in finding nearest neighbors.",
         type=float, default=None)
     parser.add_argument(
-        '-z', '--z_val', help="The Z-score to use for determining the model's radius.",
-        type=float, default=0.0)
+        '-q', '--quantile', help="The quantile to use for determining the model's radius.",
+        type=float, default=0.5)
     parser.add_argument(
         '-b', '--bins', help='How many bins to use (for chunking).',
         type=int, default=100)
