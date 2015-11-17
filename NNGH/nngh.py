@@ -1,24 +1,23 @@
 import graphlab as gl
 import graphlab.aggregate as agg
-from nngh_evaluation import rumor_component_distribution
-from nngh_evaluation import top_level_report
 
 
 class NNGraphHierarchy(object):
 
-    def __init__(self,
-                 k_limit=None,
-                 rep_fn='in_degree'):
+    def __init__(self, path=None):
         self.sf = None
         self.label = None
         self.bin_sfs = None
-        self.k_limit = k_limit
-        self.rep_fn = rep_fn
         self.reps = gl.SArray(dtype=str)
         self.hier_graph = None
         self.num_bins = 0
+        self.features = None
+        self.distance = None
 
-    def _find_radius(self, sf, connectivity, quantile):
+        if path:
+            self.sf = gl.load_sframe(path)
+
+    def _find_radius(self, sf, quantile, fname='sample_dist'):
         """
         Finds an acceptable radius to use for nearest neighbors
         on the given dataset by generating a sample set of distances
@@ -40,15 +39,19 @@ class NNGraphHierarchy(object):
 
         # Create the model and perform the query.
         k_nn = gl.nearest_neighbors.create(
-            tmp, label=self.label, features=self.features)
-        sample = k_nn.query(tmp, label=self.label, k=connectivity)
+            tmp,
+            label=self.label,
+            features=self.features,
+            distance=self.distance)
+        print k_nn['distance']
+        sample = k_nn.query(tmp, label=self.label)
 
-        # # Remove loops.
-        # # sample = self._remove_loops(sample)
+        # Remove loops.
+        # sample = self._remove_loops(sample)
         radius = gl.Sketch(sample['distance']).quantile(quantile)
 
         print 'Using Radius:\t', radius
-        sample['distance'].save('sample_dist')
+        sample['distance'].save(fname)
 
         return radius
 
@@ -137,8 +140,9 @@ class NNGraphHierarchy(object):
             self,
             sf,
             radius,
-            src_col='query_label',
-            dst_col='reference_label'):
+            k=None,
+            src_field='query_label',
+            dst_field='reference_label'):
         """
         Generates a network graph where all vertices with a
         distance less-than <radius> are connected.
@@ -169,7 +173,7 @@ class NNGraphHierarchy(object):
         nn = gl.nearest_neighbors.create(
             sf, label=self.label, features=self.features)
         edgelist = nn.query(
-            sf, label=self.label, k=None, radius=radius)
+            sf, label=self.label, k=k, radius=radius)
 
         # Remove loops from the edgelist.
         # edgelist = self._remove_loops(edgelist)
@@ -180,11 +184,10 @@ class NNGraphHierarchy(object):
             sf,
             edgelist,
             vid_field=self.label,
-            src_field=src_col,
-            dst_field=dst_col)
+            src_field=src_field,
+            dst_field=dst_field)
         return g
 
-    # Adds a field 'component_id' to the vertices of the graph 'g'.
     def _find_components(self, g, c_id_header='component_id'):
         """
         Finds the connected components in the graph <g> and
@@ -262,6 +265,8 @@ class NNGraphHierarchy(object):
         g_c_ids = hier_verts['component_id'].astype(str)
         hier_verts['bin_component'] = g_bin_ids + '_' + g_c_ids
 
+        hier_verts = hier_verts.select_columns(['bin_component', 'hier_id'])
+
         return sf.join(hier_verts, on='bin_component')
 
     def fit(self,
@@ -270,8 +275,8 @@ class NNGraphHierarchy(object):
             split_column,
             num_bins,
             path,
-            connectivity,
             quantile=0.5,
+            k=None,
             radius=None,
             features=None):
         """
@@ -310,22 +315,17 @@ class NNGraphHierarchy(object):
         """
         self.label = label
         self.label_type = type(sf[self.label][0])
-        # If no list of feature columns is provided
-        # assume all columns except the label are features.
-        if features is None:
-            self.features = sf.column_names()
-            self.features.remove(label)
+        if features:
+            self.features = features.keys()
+            self.distance = [[(f,), d, 1.0] for f, d in features.iteritems()]
+        if not k:
+            if radius is None:
+                # Use a heurisitc to find a radius.
+                self.radius = self._find_radius(sf, quantile=quantile)
+            else:
+                self.radius = radius
         else:
-            self.features = features
-
-        # Find a radius if one is not provided.
-        if radius is None:
-            # Use a heurisitc to find a radius.
-            self.radius = self._find_radius(sf,
-                                            connectivity=connectivity,
-                                            quantile=quantile)
-        else:
-            self.radius = radius
+            self.radius = None
 
         # Split the data into bins.
         sf, bins = self._split_bins(sf, split_column, num_bins)
@@ -338,7 +338,7 @@ class NNGraphHierarchy(object):
         for i, b in enumerate(bins):
             print 'Processing bin ' + str(i) + ' of ' + str(num_bins)
             # Construct a nearest neighbors graph.
-            g = self._radius_neighbors_graph(b, radius=self.radius)
+            g = self._radius_neighbors_graph(b, radius=self.radius, k=k)
             # Find the connected components.
             g = self._find_components(g)
             # Find the component representatives.
@@ -348,13 +348,6 @@ class NNGraphHierarchy(object):
         # We're done with the individual bin SFrames now.
         del self.bin_sfs
 
-        # DEBUG: Check to see if we have preserved sf length.
-        # length_comparison = sf.num_rows() == processed_sf.num_rows()
-        # print '#DEBUG:\tlen(sf) == len(processed_sf):\t', length_comparison
-        # if not length_comparison:
-        #     print 'sf: ', sf.num_rows()
-        #     print 'processed_sf: ', processed_sf.num_rows()
-
         processed_sf.rename({'__id': label})
 
         print '\nConstructing Hierarchy Graph...\n'
@@ -362,21 +355,15 @@ class NNGraphHierarchy(object):
         # (This contains the representatives for components in all bins).
         rep_sf = processed_sf.filter_by(reps, label)
 
-        # --- Generally, the radius we used for the bins isn't a good choice
-        # --- for the representatives, so we find a new one.
-
-        # Try to have about the same ratio of components to examples as
-        # the buckets.
-        # connectivity_ratio = float(connectivity) / processed_sf.num_rows()
-        # rep_connectivity = int(rep_sf.num_rows() * connectivity_ratio)
-        # rep_connectivity = int(processed_sf['in_degree'].mean())
-        # rep_radius = self._find_radius(rep_sf,
-        #                                connectivity=rep_connectivity,
-        #                                z_val=z_val)
-        rep_radius = self.radius
+        if not k:
+            rep_radius = self._find_radius(rep_sf,
+                                           quantile=quantile,
+                                           fname='hier_sample_dist')
+        else:
+            rep_radius = None
 
         # Construct a radius graph for the representatives.
-        g = self._radius_neighbors_graph(rep_sf, radius=rep_radius)
+        g = self._radius_neighbors_graph(rep_sf, radius=rep_radius, k=k)
         # Label the components in the new graph.
         g = self._find_components(g, c_id_header='hier_id')
         self.hier_graph = g
@@ -384,94 +371,24 @@ class NNGraphHierarchy(object):
         # Propagate the top-level component labels from the represenatives
         # to all of the vertices in their respective components.
         result = self._propagate_hier_labels(processed_sf, self.hier_graph)
-
-        # Assign the model's SFrame to the final result.
         self.sf = result
 
+    def query(self, query_ids, label='id', component_label='component_id'):
+        result = self.sf.filter_by(query_ids, label)
+        result_ids = result[component_label].unique()
+        return self.sf.filter_by(result_ids, component_label)
 
-def main(args):
-    # Load the dataset.
-    sf = gl.load_sframe(args.dataset)
-
-    # If a valid sample size was provided
-    # then replace the full dataset with a sample.
-    if 0. < args.sample_size < 1.:
-        sf = sf.sample(args.sample_size)
-
-    # Create and fit the model.
-    nnh = NNGraphHierarchy()
-    nnh.fit(
-        sf,
-        label=args.label,
-        split_column=args.split_column,
-        num_bins=args.bins,
-        path=args.output,
-        connectivity=args.connectivity,
-        quantile=args.quantile,
-        radius=args.radius
-    )
-
-    # Save the results.
-    nnh.sf.save(args.output)
-
-    # If a path to rumor-related tweets was provided
-    # then run an analysis of rumor-tweet distribution
-    # across top-level components.
-    if args.rel_path:
-        # Load the list of related tweet ids for each rumor.
-        related = gl.SFrame.read_csv(args.rel_path)
-        rumor_report = rumor_component_distribution(
-            nnh.sf,
-            related,
-        )
-        rumor_report.save(args.output + 'rumor_report.csv', format='csv')
-
-    # Save a report containing various information about
-    # the top-level components.
-    hier_report = top_level_report(nnh.sf)
-    hier_report.save(args.output + '_hier_report.csv')
-
-    print 'Success!'
-    exit()
-
-
-if __name__ == '__main__':
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description='Attempts to find clusters of related data via a multi-step approach.')
-    parser.add_argument(
-        'dataset', help='Path to the dataset (SFrame on disk)',
-        type=str)
-    # sydney_processed
-    parser.add_argument(
-        'label', help='The name of the label column in the dataset',
-        type=str)
-    # mongo_id
-    parser.add_argument(
-        '-sc', '--split_column', help='The name of the label column to use for chunking.',
-        type=str, default='time')
-    parser.add_argument(
-        '-o', '--output', help='Path to write results to.',
-        type=str, default='NNGH_result')
-    parser.add_argument(
-        '-ss', '--sample_size', help="What percentage of the input dataset to use.",
-        type=float, default=1.)
-    parser.add_argument(
-        '-c', '--connectivity', help="The desired average degree of a node in a bin graph.",
-        type=int, default=80)
-    parser.add_argument(
-        '-r', '--radius', help="The desired radius to be used in finding nearest neighbors.",
-        type=float, default=None)
-    parser.add_argument(
-        '-q', '--quantile', help="The quantile to use for determining the model's radius.",
-        type=float, default=0.5)
-    parser.add_argument(
-        '-b', '--bins', help='How many bins to use (for chunking).',
-        type=int, default=100)
-    parser.add_argument(
-        '-rel', '--rel_path', help='Path to a csv containing the ids of rumor-related tweets. (for checking accuracy)',
-        type=str, default='sydney_rumors.csv')
-
-    args = parser.parse_args()
-    main(args)
+    def get_components(self,
+                       query_set,
+                       label='id',
+                       component_label='component_id'):
+        '''
+        Takes either an SFrame of query data, or a list of query
+        component ids, and returns an SFrame containing the components
+        which match the query.
+        '''
+        if isinstance(query_set, gl.SFrame):
+            query_ids = query_set[component_label].unique()
+        elif type(query_set) == list and len(query_set):
+            query_ids = query_set
+        return self.sf.filter_by(query_ids, component_label)
