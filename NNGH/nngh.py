@@ -373,10 +373,16 @@ class NNGraphHierarchy(object):
         result = self._propagate_hier_labels(processed_sf, self.hier_graph)
         self.sf = result
 
-    def query(self, query_ids, label='id', component_label='component_id'):
+    def query_filter(self, query_ids, label='mongo_id', component_label='component_id'):
         result = self.sf.filter_by(query_ids, label)
         result_ids = result[component_label].unique()
         return self.sf.filter_by(result_ids, component_label)
+
+    def query(self, query_ids, label='mongo_id', component_label='component_id'):
+        query_rows = self.sf.filter_by(query_ids, label).select_columns([label, component_label])
+        result = query_rows.join(self.sf.select_columns([label, component_label]), on=component_label, how='inner')
+        result.rename({label:'query_id', label+'.1':'reference_id'})
+        return result.sort(['query_id', 'reference_id'])
 
     def get_components(self,
                        query_set,
