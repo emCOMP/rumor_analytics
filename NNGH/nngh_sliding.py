@@ -6,10 +6,10 @@ class NNGraphHierarchy(object):
         """
         sf_path (str): Path to a previously trained SFrame
         g_path (str): Path to a previously trianed SGraph
-        cache_max (float): The quantile of distances to cache.
+        cache_max (float): The highest quantile of distances to cache.
         """
 
-    def __init__(self, sf_path=None, g_path=None, cache_max=):
+    def __init__(self, sf_path=None, g_path=None, cache_max=0.75):
         self.sf = None
         self.label = None
         self.bin_sfs = None
@@ -18,6 +18,7 @@ class NNGraphHierarchy(object):
         self.num_bins = 0
         self.features = None
         self.distance = None
+        self.cache_max = cache_max
         if g_path:
             self.g = gl.load_sgraph(g_path)
             self.sf = self.g.vertices
@@ -50,17 +51,17 @@ class NNGraphHierarchy(object):
             label=self.label,
             features=self.features,
             distance=self.distance)
-        print k_nn['distance']
         sample = k_nn.query(tmp, label=self.label)
 
         # Remove loops.
         # sample = self._remove_loops(sample)
         radius = gl.Sketch(sample['distance']).quantile(quantile)
+        cache_radius = gl.Sketch(sample['distance']).quantile(self.cache_max)
 
         print 'Using Radius:\t', radius
         sample['distance'].save(fname)
 
-        return radius
+        return (radius, cache_radius)
 
 
     def _split_bins(self, sf, split_column, num_bins):
@@ -311,6 +312,7 @@ class NNGraphHierarchy(object):
             quantile=0.5,
             k=None,
             radius=None,
+            cache_radius=None,
             features=None,
             dist=None,
             kmax=30):
@@ -357,13 +359,15 @@ class NNGraphHierarchy(object):
             self.features = None
             self.distance = None
         if not k:
-            if radius is None:
+            if radius is None or cache_radius is None:
                 # Use a heurisitc to find a radius.
-                self.radius = self._find_radius(sf, quantile=quantile)
+                self.radius, self.cache_radius = self._find_radius(sf, quantile=quantile)
             else:
                 self.radius = radius
+                self.cache_radius = cache_radius
         else:
             self.radius = None
+            self.cache_radius = None
 
         sf = sf.sort(split_column)
 
