@@ -1,78 +1,97 @@
 from matplotlib import pyplot as plt
+from nngh import NNGraphHierarchy
 import numpy as np
-import pandas as pd
+import graphlab as gl
+import graphlab.aggregate as agg
 
 
-def main(
-    path,
-    cutoff,
-    count_columns):
+def main(path, output, radius, cutoff=None, logscale=False, width_by_size=False, include_unrelated=False):
 
-    dtypes = {c: np.float32 for c in count_columns}
-    dtypes['size'] = np.float32
-    dtypes['component'] = str
-    df = pd.read_csv(path, index_col=False, dtype=dtypes)
+    #m = NNGraphHierachy(path)
+    #g = m.get_graph(radius)
+    #sf = g.vertices
+    sf = gl.SFrame('vis_test_dump')
+    sf['rumor'] = sf['rumor'].fillna('None')
+    rumors = list(sf['rumor'].unique())
+    groups = sf.groupby(['hier_id', 'rumor'], {'tweets': agg.COUNT()})
+    data = groups.unstack(['rumor', 'tweets'], 'rumor_tweets').unpack('rumor_tweets', limit=rumors, column_types=[int for r in rumors], column_name_prefix='')
+    # Compute the size of each component
+    data['size'] = data[rumors].apply(lambda x: sum([v for k,v in x.iteritems() if v]))
+    data['rumor_tweets'] = data[[r for r in rumors if r != 'None']].apply(lambda x: sum([v for k,v in x.iteritems() if v]))
+    rumor_only = data.dropna([r for r in rumors if r != 'None'], how='all')
+    if cutoff:
+        rumor_only = rumor_only[rumor_only['rumor_tweets'] >= cutoff]
+    
+    for r in rumors:
+        data[r] = data[r].fillna(0)
+        if logscale:
+            data[r] = data[r].clip_lower(1).apply(np.log10).fillna(0)
+        
+        if r in rumor_only.column_names():
+            rumor_only[r] = rumor_only[r].fillna(0)
+            if logscale:
+                rumor_only[r] = rumor_only[r].clip_lower(1).apply(np.log10).fillna(0)
 
-    # Clean the data to take out components with less
-    # than CUTOFF rumor related tweets.
-    sums = df[count_columns].sum(axis=1)
-    df = df[sums > cutoff]
-
+    if not include_unrelated:
+        rumors.remove('None')
+    tmp = rumor_only[rumors]
+    print tmp
+    rumor_labels = [c for c in tmp.column_names() if c in rumors]
+    z = rumor_only[rumors].to_numpy().T
+    
     # Create a grid with the coodinates for the tiles.
     # (Each column of tiles has identical height)
-    y, x = np.mgrid[0:len(count_columns) + 1, 0:len(df['size'])+1]
+    y, x = np.mgrid[0:z.shape[0] + 1, 0:z.shape[1] + 1]
 
-    # Transform the width of each column by the size
-    # of the corresponding component.
-    size = np.array(list(df['size']))
+    if width_by_size:
+        # Transform the width of each column by the size
+        # of the corresponding component.
+        x = [0.]
+        x_labels = []
+        prev = 0.
+        for v in rumor_only['size']:
+            current = prev + v
+            x.append(current)
+            x_labels.append(prev + (v / 2))
+            prev = current
 
-    # x = [0.]
-    # x_labels = []
-    # prev = 0.
-    # for v in size:
-    #     current = prev + v
-    #     x.append(current)
-    #     x_labels.append(prev + (v / 2))
-    #     prev = current
-
-    x = np.array(x)
-    # Get the counts for each tile.
-    x_labels = [i for i in range(df.shape[0])]
-    data = df[count_columns]
-    # Clip the zero values since we're taking the log.
-    data = data.clip_lower(1)
-    # Take the log.
-    data = data.apply(np.log10)
-    data = data.fillna(0).values
+        x = np.array(x)
+    
+    else:
+        x_labels = x / 2
 
     # Plot it
     fig, ax = plt.subplots()
-    plt.pcolormesh(x, y, data.T,
+    plt.pcolormesh(x, y, z,
                    cmap='Blues',
                    edgecolors=[0.9, 0.9, 0.9],
-                   vmin=data.min(),
-                   vmax=data.max()
+                   vmin=z.min(),
+                   vmax=z.max()
                    )
     plt.axis([x.min(), x.max(), y.min(), y.max()])
     plt.title('Top Level Component-Tweet Distribution')
     plt.xlabel('Component\n(Label and Width Indicate Component Size)\n')
     plt.xticks(
         x_labels,
-        [x.replace('_h','') for x in df['component']],
+        list(rumor_only.apply(lambda x: 'id: {}\nsize: {}'.format(x['hier_id'], x['size']))),
         rotation='vertical'
         )
-
-    # plt.xticks(
-    #     np.arange(x.shape[1]),
-    #     list(string.ascii_letters)[:x.shape[1]])
     plt.ylabel('Rumor')
-    plt.yticks(np.arange(len(count_columns)) + 0.5, count_columns)
+    plt.yticks(np.arange(len(rumor_labels)) + 0.5, rumor_labels)
     for tic in ax.yaxis.get_major_ticks():
         tic.tick1On = tic.tick2On = False
     cb = plt.colorbar()
-    cb.set_label('Rumor Tweet Count\n(log10 scale)')
+    label_text = 'Rumor Tweet Count'
+    if logscale:
+        label_text += '\n(log10 scale)'
+    cb.set_label(label_text)
     plt.tight_layout()
     plt.show()
+
+    # Save the output
+    if not output.endswith('.pdf'):
+        output = output+'.pdf'
+    fig.savefig(output, format='pdf')
 
 if __name__ == '__main__':
     import argparse
@@ -80,19 +99,27 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description='Visualizes NNGH Accuracy Results')
     parser.add_argument(
-        'accuracy_data', help='Path to the dataset (csv on disk)',
+        'model_path', help='Path to the SFrame',
         type=str)
-    # sydney_processed
     parser.add_argument(
-        '-cut', '--cutoff', help='The minimum number of rumor tweets which must be included in a component for it to appear in the visual.',
-        type=int, default=10)
-    # mongo_id
+        'output', help='The output path',
+        type=str)
     parser.add_argument(
-        '-sc','--split_column', help='The name of the label column to use for chunking.',
-        type=str, default='time')
+        '-r', '--radius', help='The radius for which to filter the model cache.',
+        type=float, default=3.0)
     parser.add_argument(
-        '-dc', '--count_columns', help='Which columns in the dataframe contain ',
-        type=str, nargs='*', default=['flag', 'suicide', 'hadley', 'lakemba', 'airspace'])
+        '-c', '--cutoff', help='The minimum number of rumor tweets which must be included in a component for it to appear in the visual.',
+        type=int, default=None)
+    parser.add_argument(
+        '-l', '--logscale', help='Whether or not to use a log scale for color intensity',
+        action='store_true')
+    parser.add_argument(
+        '-w', '--width_by_size', help='Whether or not to adjust the width of each column by the component size',
+        action='store_true')
+    parser.add_argument(
+        '-u', '--unrealted', help='Whether or not to include a column for unrealted tweets',
+        action='store_true')
 
     args = parser.parse_args()
-    main(args.accuracy_data, args.cutoff, args.count_columns)
+    main(args.model_path, args.output, args.radius, cutoff=args.cutoff, logscale=args.logscale, width_by_size=args.width_by_size, include_unrelated=args.unrealted)
+    exit()
