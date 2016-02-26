@@ -17,8 +17,11 @@ def main(path, output, radius, cutoff=None, logscale=False, width_by_size=False,
     data = groups.unstack(['rumor', 'tweets'], 'rumor_tweets').unpack('rumor_tweets', limit=rumors, column_types=[int for r in rumors], column_name_prefix='')
     # Compute the size of each component
     data['size'] = data[rumors].apply(lambda x: sum([v for k,v in x.iteritems() if v]))
+    if logscale:
+        data['log_size'] = data['size'].clip_lower(1).apply(np.log10).fillna(0)
     data['rumor_tweets'] = data[[r for r in rumors if r != 'None']].apply(lambda x: sum([v for k,v in x.iteritems() if v]))
     rumor_only = data.dropna([r for r in rumors if r != 'None'], how='all')
+    
     if cutoff:
         rumor_only = rumor_only[rumor_only['rumor_tweets'] >= cutoff]
     
@@ -44,21 +47,23 @@ def main(path, output, radius, cutoff=None, logscale=False, width_by_size=False,
     y, x = np.mgrid[0:z.shape[0] + 1, 0:z.shape[1] + 1]
 
     if width_by_size:
+        if logscale:
+            s = rumor_only['log_size']
+        else:
+            s = rumor_only['size']
         # Transform the width of each column by the size
         # of the corresponding component.
         x = [0.]
         x_labels = []
         prev = 0.
-        for v in rumor_only['size']:
+        for v in s:
             current = prev + v
             x.append(current)
             x_labels.append(prev + (v / 2))
             prev = current
-
         x = np.array(x)
-    
     else:
-        x_labels = x / 2
+        x_labels = x[0] + 0.5
 
     # Plot it
     fig, ax = plt.subplots()
@@ -71,9 +76,10 @@ def main(path, output, radius, cutoff=None, logscale=False, width_by_size=False,
     plt.axis([x.min(), x.max(), y.min(), y.max()])
     plt.title('Top Level Component-Tweet Distribution')
     plt.xlabel('Component\n(Label and Width Indicate Component Size)\n')
+    x_label_text = list(rumor_only.apply(lambda x: 'id: {} | size: {}'.format(x['hier_id'], x['size'])))
     plt.xticks(
         x_labels,
-        list(rumor_only.apply(lambda x: 'id: {}\nsize: {}'.format(x['hier_id'], x['size']))),
+        x_label_text,
         rotation='vertical'
         )
     plt.ylabel('Rumor')
