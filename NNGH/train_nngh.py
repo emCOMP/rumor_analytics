@@ -1,5 +1,5 @@
 import graphlab as gl
-from nngh_full import NNGraphHierarchy
+from nngh import NNGraphHierarchy
 
 def main(args):
     # Load the dataset.
@@ -7,8 +7,9 @@ def main(args):
     # Get the pos_tag count column names.
     tag_cols = [i for i in sf.column_names() if i.startswith('pos_count')]
     # Set up some distance metrics
-    dists = [[('unigrams', 'bigrams'), 'jaccard', 1],
-             [('pos_bigrams',), 'weighted_jaccard', 1],
+    # [('bigrams',), 'jaccard', 1],
+    dists = [
+             [('pos_bigrams', 'tfidf'), 'weighted_jaccard', 1],
              [('doc_vecs',), 'cosine', 1],
              [tuple(['time'] + tag_cols), 'euclidean', 1]
             ]
@@ -25,9 +26,9 @@ def main(args):
         radius=args.radius,
         cache_radius=args.cache_radius,
         distance=dists,
+        k=args.num_neighbors,
         window_size=args.win_size,
-        window_offset=args.win_offset,
-        k=args.num_neighbors
+        window_offset=args.win_offset
     )
     # Save the results.
     nnh.save(args.output)

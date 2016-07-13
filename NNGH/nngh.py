@@ -1,6 +1,8 @@
 import graphlab as gl
 import graphlab.aggregate as agg
 import os
+import json
+import warnings
 
 
 class NNGraphHierarchy(object):
@@ -11,9 +13,25 @@ class NNGraphHierarchy(object):
     def __init__(self, model_path=None):
         if model_path:
             self.g = gl.load_sgraph(os.path.join(model_path, 'model.graph'))
-            self.verts = self.g.vertices
             self.cache = gl.load_sframe(os.path.join(model_path, 'model.cache'))
+            try:
+                with open(os.path.join(model_path,'model.settings'), 'rb') as f:
+                    self.settings = json.load(f)
+                    dist = self.settings['distance']
+                    for i in range(len(dist)):
+                        dist[i][0] = map(str, dist[i][0])
+                        dist[i][1] = str(dist[i][1])
+                        dist[i][2] = float(dist[i][2])
+            except Exception as e:
+                warnings.warn("Error occured reading settings file.", RuntimeWarning)
+                print e
+            try:
+                self.collapse_mapping = gl.load_sframe(os.path.join(model_path,'model.c_map'))
+            except Exception as e:
+                    warnings.warn("Error occured reading collapse mapping.", RuntimeWarning)
+                    print e
 
+    
     # sf is the bin dataset
     def _radius_neighbors_graph(
             self,
@@ -102,24 +120,57 @@ class NNGraphHierarchy(object):
 
         return g
 
+    def _collapse_verts(self):
+        '''
+        Collapses the vertices of the model's graph over the unique connected components, 
+        taking one representative for each component. Creating a new "dataset" using only
+        the representatives.
+        
+        Returns:
+            (SFrame, SFrame): (the new dataset, the '__id' mapping from the original dataset
+                                to the new one).
+        '''
+        # Make sure the model has a cache and graph before we try to collapse the vertices
+        if not self.cache:
+            raise RuntimeError('Cannot access cached egdges or vertices')
+        elif not self.g:
+            raise RuntimeError('Cannot access model graph')
+        collapsed_verts = self.g.vertices.groupby('hier_id', {'collapsed_id':agg.SELECT_ONE('__id')})
+        # Create a new "dataset" using only the representatives, remove the hier_id field 
+        # since it will be recalculated.
+        collapsed_sf = self.g.vertices.filter_by(collapsed_verts['collapsed_id'].unique(), '__id').remove_columns(['hier_id'])
+        collapsed_sf.rename({'__id': 'collapsed_id'})
+        # Join the representative id onto the original ids so we can keep track.
+        collapse_mapping = self.g.vertices.join(collapsed_verts[['hier_id', 'collapsed_id']], on='hier_id', how='left')[['__id', 'collapsed_id']]
+        
+        return (collapsed_sf, collapse_mapping)
+
+
     def fit_sliding(self,
                      sf,
                      label,
+                     split_column,
                      radius,
                      cache_radius,
-                     split_column,
                      distance,
                      k=None,
                      window_size=0.1,
-                     window_offset=0.5):
+                     window_offset=0.5,
+                     collapse=True):
+        # Record what settings were passed so we can see them later.
+        self.settings = {k: v for k, v in locals().iteritems() if k != 'self' and k != 'sf'}
         
-        sf = sf.sort(split_column)
+        if "__id" in sf.column_names():
+            raise RuntimeError("Unsupported Column Name: please rename column '__id'")
+
+        sf = sf.sort(split_column).sort(label).add_row_number("__id")
         # These will serve as window boundaries.
         window_width = int(window_size * sf.num_rows())
         window_begin = 0
         window_end = window_width
         edgelist = None
-
+        # i = 0
+        # step_size = int(window_width * (1. - window_offset))
         while window_begin < sf.num_rows():
             print 'Processing...', 100 * float(window_begin)/ sf.num_rows(), 'percent complete.'
             # Grab the points in the current window
@@ -129,32 +180,118 @@ class NNGraphHierarchy(object):
                 cur_window = sf[window_begin:]
             
             # Get the nn-graph for this window.
-            g = self._radius_neighbors_graph(cur_window, label=label, distance=distance, radius=cache_radius, k=k)
+            g = self._radius_neighbors_graph(cur_window, label="__id", distance=distance, radius=cache_radius, k=k)
             
             # Add the edges to the edgelist.
             if not edgelist:
-                edgelist = g.get_edges(src_ids=[None], dst_ids=[None])
+                edgelist = g.get_edges()
             else:
-                edgelist = edgelist.append(g.get_edges(src_ids=[None], dst_ids=[None]))
-
+                edgelist = edgelist.append(g.get_edges())
+            # src_min = i * step_size
+            # src_max = int(src_min + window_width - 1)
+            # print "Window:\t{} to {}".format(cur_window['__id'].min(),cur_window['__id'].max())
+            # print "Window:\t{} to {}".format(src_min,src_max)
             window_begin = window_end - (window_offset * window_width)
             window_end = window_begin + window_width
+            # i += 1
 
         # Trim any duplicate edges from window-overlaps.
+        del edgelist['rank']
         edgelist = edgelist.unique()
         
-        # Set the model's cache, graph, and vert
+        # Set the model's cache and graph
         self.cache = edgelist
-        self.verts = sf
-        self.g = self.get_graph(label, radius) 
+        self.g = gl.SGraph(vertices=sf, edges=edgelist, vid_field="__id")
+        self.g = self.get_graph(radius)
 
-    def get_graph(self, label, radius):
-        if not self.verts or not self.cache:
-            raise RuntimeError('Cannot access cached egdges or vertices.')
+        # Collapse the vertices
+        if collapse:
+            # Collapse the vertices
+            collapsed_sf, self.collapse_mapping = self._collapse_verts()
+            # Run the model again with the collapsed vertices
+            self.fit_sliding(
+                         collapsed_sf,
+                         label,
+                         split_column,
+                         radius,
+                         cache_radius,
+                         distance,
+                         k=k,
+                         window_size=window_size,
+                         window_offset=window_offset,
+                         collapse=False)
 
+
+    def get_graph(self, radius, ws=None, wo=None, split_col='time', label='__id'):
+        # Returns whether or not an edge from src_row to dst_row
+        # is valid, given a window width and window offset.
+        def valid_edge(src_row, dst_row, window_width, step_size):
+            # Calculate the window bounds for both src and dst.
+            src_min = int(src_row / step_size) * step_size
+            src_max = int(src_min + window_width - 1)
+            dst_min = int(dst_row / step_size) * step_size
+            dst_max = int(dst_min + window_width - 1)
+            # If the windows overlap, it is a valid edge.
+            if (src_min <= dst_row <= src_max) or (dst_min <= src_row <= dst_max):
+                return True
+            else:
+                return None
+
+        if not self.cache:
+            raise RuntimeError('Cannot access cached egdges or vertices')
+        elif radius > self.settings['cache_radius']:
+            raise ValueError('Requested radius is larger than cached radius')
         # Prune the cached edges down to the desired radius.
-        pruned = self.cache[self.cache['distance'] <= radius]
-        g = gl.SGraph(vertices=self.verts, edges=pruned, vid_field=label)
+        edges = self.cache[self.cache['distance'] <= radius]
+        if ws and wo and (ws != self.settings['window_size'] or wo != self.settings['window_offset']):
+            verts = self.g.vertices.sort('__id')
+            old_width = int(self.settings['window_size'] * verts.num_rows())
+            new_width = int(ws * verts.num_rows())
+            old_overlap = old_width * self.settings['window_offset']
+            new_overlap = new_width * wo
+            overlap_diff = int(old_overlap - new_overlap)
+            old_step_size = int(old_width - old_overlap)
+            new_step_size = int(new_width - new_overlap)
+            features = []
+            [features.extend(list(i[0])) for i in self.settings['distance']]
+            # Calculate any missing edges
+            start = old_step_size
+            end = start + old_width
+            steps = 1
+            while start < verts.num_rows():
+                # Calcuate the new left and right bounds for the window.
+                old_left = start
+                new_left = start + (overlap_diff * steps)
+                old_right = end
+                new_right = end + (overlap_diff * steps)
+
+                if new_right <= verts.num_rows():
+                    window = verts[new_left: new_right]
+                else:
+                    window = verts[new_left:]
+                # If the difference is negative we are calculating missing
+                # edges on the left side of the window.
+                if overlap_diff < 0:
+                    q_set = verts[new_left:old_left]
+                # Otherwise the missing edges are on the right
+                else:
+                    q_set = verts[old_right:new_right]
+
+                if window.num_rows() and q_set.num_rows():
+                    nn = gl.nearest_neighbors.create(
+                        window, label='__id', features=features, distance=self.settings['distance'])
+                    new_edges = nn.query(
+                        q_set, label='__id', k=self.settings['k'], radius=radius)
+                    new_edges.rename({"query_label": "__src_id", "reference_label": "__dst_id"})
+                    edges = edges.append(new_edges.remove_columns(['rank']).unique())
+                    start += old_step_size + overlap_diff
+                    end += old_step_size + overlap_diff
+                steps += 1
+            edges = edges.unique()
+            edges['filter'] = edges.apply(lambda x: valid_edge(int(x['__src_id']), int(x['__dst_id']), new_width, new_step_size))
+            edges = edges.dropna('filter')
+            del edges['filter']
+        g = gl.SGraph(vertices=self.g.vertices, edges=edges, vid_field='__id')
         # Add connected component IDs to the graph.
         g = self._find_components(g, c_id_header='hier_id')
         return g
@@ -162,20 +299,24 @@ class NNGraphHierarchy(object):
     def save(self, outpath):
         self.g.save(os.path.join(outpath,'model.graph'))
         self.cache.save(os.path.join(outpath,'model.cache'))
+        if self.collapse_mapping:
+            self.collapse_mapping.save(os.path.join(outpath,'model.c_map'))
+        with open(os.path.join(outpath,'model.settings'), 'wb') as f:
+            json.dump(self.settings, f)
 
 
     def query_filter(self, query_ids, label='__id', component_label='component_id', kmin=None):
-        result = self.verts.filter_by(query_ids, label)
+        result = self.g.vertices.filter_by(query_ids, label)
         result_ids = result[component_label].unique()
-        filtered_set = self.verts.filter_by(result_ids, component_label)
+        filtered_set = self.g.vertices.filter_by(result_ids, component_label)
         if kmin:
             filtered_set = filtered_set[filtered_set['kcore_id'] >= kmin]
         return filtered_set
 
     def query(self, query_ids, label='__id', component_label='component_id'):
-        query_rows = self.verts.filter_by(
+        query_rows = self.g.vertices.filter_by(
             query_ids, label).select_columns([label, component_label])
-        result = query_rows.join(self.verts.select_columns(
+        result = query_rows.join(self.g.vertices.select_columns(
             [label, component_label]), on=component_label, how='inner')
         result.rename({label: 'query_id', label + '.1': 'reference_id'})
         return result.sort(['query_id', 'reference_id'])
@@ -193,4 +334,6 @@ class NNGraphHierarchy(object):
             query_ids = query_set[component_label].unique()
         elif type(query_set) == list and len(query_set):
             query_ids = query_set
-        return self.verts.filter_by(query_ids, component_label)
+        else:
+            return None
+        return self.g.vertices.filter_by(query_ids, component_label)
